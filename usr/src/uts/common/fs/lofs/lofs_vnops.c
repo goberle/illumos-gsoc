@@ -22,8 +22,9 @@
  * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
-
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
+/*
+ * Copyright 2011 Joyent, Inc.
+ */
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -35,12 +36,16 @@
 #include <sys/cred.h>
 #include <sys/pathname.h>
 #include <sys/debug.h>
+#include <sys/cmn_err.h>
 #include <sys/fs/lofs_node.h>
 #include <sys/fs/lofs_info.h>
 #include <fs/fs_subr.h>
 #include <vm/as.h>
 #include <vm/seg.h>
 
+static int lowervn(vnode_t *, cred_t *, vnode_t **);
+static pathname_t *relpn(pathname_t *, vnode_t *);
+void pn_striplast(pathname_t *);
 /*
  * These are the vnode ops routines which implement the vnode interface to
  * the looped-back file system.  These routines just take their parameters,
@@ -310,6 +315,7 @@ lo_lookup(
 	int doingdotdot = 0;
 	int nosub = 0;
 	int mkflag = 0;
+	int mkshadowdir = 0;
 
 	/*
 	 * If name is empty and no XATTR flags are set, then return
@@ -339,9 +345,44 @@ lo_lookup(
 	 * Do the normal lookup
 	 */
 	if (error = VOP_LOOKUP(realdvp, nm, &vp, pnp, flags, rdir, cr,
-	    ct, direntflags, realpnp)) {
-		vp = NULL;
-		goto out;
+		ct, direntflags, realpnp)) {
+		if (vfs_optionisset(dvp->v_vfsp, MNTOPT_LOFS_UNION, NULL)) {
+			vnode_t *ldvp;
+			
+			/* XXX: Are we crapping on the better error here? */
+			if ((error = lowervn(dvp, cr, &ldvp)) != 0) {
+				vp = NULL;
+				goto out;
+			}
+
+			error = VOP_LOOKUP(ldvp, nm, &vp, pnp, flags, rdir, cr,
+				ct, direntflags, realpnp);
+
+        	VN_RELE(ldvp);
+
+			if (error) {
+				vp = NULL;
+				goto out;
+			}
+
+			/*
+			 * XXX: I think we should: realdvp = ldvp here 
+			 *
+			 * I don't follow all the implications in the loop
+			 * detection, below, and I'm not sure what we'd need
+			 * to do with ldvp's reference count, but I think
+			 * realdvp being ldvp is necessary for the rest of this
+			 * to continue to do the right things with loops.
+			 */
+			if(vp->v_type == VDIR)
+				mkshadowdir++;
+
+			realdvp = ldvp;
+
+		} else {
+			vp = NULL;
+			goto out;
+		}
 	}
 
 	/*
@@ -478,6 +519,25 @@ lo_lookup(
 				*vpp = svp;
 		}
 		return (error);
+	}
+
+	/*
+	 * XXX: Make Shadow Dir
+	 */
+	if (mkshadowdir) {
+		vattr_t va;
+		vsecattr_t *vsecp = NULL;
+
+		if (error = VOP_GETATTR(vp, &va, flags, cr, ct)) {
+			goto out;
+		}
+
+   		if (error = VOP_MKDIR(realvp(dvp), nm, &va, vpp, cr, ct, vp->v_flag, vsecp)) {
+   			goto out;
+   		}
+	    
+	    *vpp = makelonode(*vpp, li, 0);
+	    return (error);
 	}
 
 	/*
@@ -871,14 +931,14 @@ lo_mkdir(
 	vsecattr_t *vsecp)
 {
 	int error;
-
+	
 #ifdef LODEBUG
 	lo_dprint(4, "lo_mkdir vp %p realvp %p\n", dvp, realvp(dvp));
 #endif
-	error = VOP_MKDIR(realvp(dvp), nm, va, vpp, cr, ct, flags, vsecp);
-	if (!error)
-		*vpp = makelonode(*vpp, vtoli(dvp->v_vfsp), 0);
-	return (error);
+    error = VOP_MKDIR(realvp(dvp), nm, va, vpp, cr, ct, flags, vsecp);
+    if (!error)
+	    *vpp = makelonode(*vpp, vtoli(dvp->v_vfsp), 0);
+    return (error);
 }
 
 static int
@@ -944,6 +1004,130 @@ lo_readlink(
 	return (VOP_READLINK(vp, uiop, cr, ct));
 }
 
+void
+pn_striplast(pathname_t *pnp)
+{
+	char *buf = pnp->pn_buf;
+	char *path = pnp->pn_path + pnp->pn_pathlen - 1;
+
+	if (*buf == '\0')
+		return;
+
+	while (path > buf && *path != '/')
+		--path;
+	*path = '\0';
+
+	pnp->pn_pathlen = path - pnp->pn_path;
+}
+
+static pathname_t *
+relpn(pathname_t *pn, vnode_t *relvp)
+{
+	pathname_t vpn;
+	pathname_t *ret = NULL;
+	char pncomp[MAXNAMELEN];
+	char vncomp[MAXNAMELEN];
+
+	if (pn_get(relvp->v_path, UIO_SYSSPACE, &vpn) != 0)
+		return NULL;
+
+	/*
+	 * If the paths match, the relative path from one to the other
+	 * is explicitly ".".
+	 *
+	 * XXX: This feels wrong
+	 */
+	if (strcmp(pn->pn_path, relvp->v_path) == 0) {
+		ret = kmem_zalloc(sizeof (pathname_t), KM_SLEEP);
+		pn_alloc(ret);
+		pn_set(ret, ".");
+		return ret;
+	}
+
+	/* If the vnode path is longest, pn can't be a child */
+	if (strlen(pn->pn_path) < strlen(relvp->v_path))
+		return NULL;
+	
+	while (pn_pathleft(&vpn) && pn_pathleft(pn)) {
+		pn_skipslash(&vpn);
+		pn_skipslash(pn);
+
+		/* These only return non-0 on actual error */
+		if ((pn_getcomponent(pn, pncomp) != 0) ||
+		    (pn_getcomponent(&vpn, vncomp) != 0))
+			return NULL;
+
+		if (strcmp(pncomp, vncomp) != 0)
+			return NULL;
+	}
+
+	if (pn_pathleft(pn)) {
+		pn_skipslash(pn);
+		ret = kmem_zalloc(sizeof (pathname_t), KM_SLEEP);
+		pn_get(pn->pn_path, UIO_SYSSPACE, ret);
+	}
+
+	return ret;
+}
+
+static int
+lowervn(vnode_t *vp, cred_t *cr, vnode_t **lvp)
+{
+	pathname_t *rpn;
+	pathname_t vpn;
+	int err = 0;
+
+	pn_get(vp->v_path, UIO_SYSSPACE, &vpn);
+
+	if ((rpn = relpn(&vpn, vp->v_vfsp->vfs_vnodecovered)) == NULL)
+		return -1;
+
+	/*
+	 * If we're asked for the mountpoint, we can return the underlying
+	 * vnode directly.
+	 */
+	if (strcmp(vp->v_path, vp->v_vfsp->vfs_vnodecovered->v_path) == 0) {
+		*lvp = vp->v_vfsp->vfs_vnodecovered;
+		VN_HOLD(vp->v_vfsp->vfs_vnodecovered);
+	} else {
+		char comp[MAXNAMELEN];
+		vnode_t *pvp;
+
+		/*
+		 * lookup* traverse mountpoints unconditionally, lookup the
+		 * first level component by hand to avoid the traversal into
+		 * the upper layer, and then lookup as normal.
+		 */
+		 pn_getcomponent(rpn, comp);
+		 err = VOP_LOOKUP(vp->v_vfsp->vfs_vnodecovered,
+		     comp, &pvp, NULL, 0, NULL, cr, NULL, NULL, NULL);
+
+		 if (err != 0)
+			 goto out;
+
+		 /*
+		  * If the request was only be one level below the mountpoint,
+		  * we're done
+		  */
+		 if (!pn_pathleft(rpn)) {
+			 /* pvp was already held by the VOP_LOOKUP */
+			 *lvp = pvp;
+		 } else {
+			/* XXX: Really lookup links? */
+			 pn_skipslash(rpn);
+			 err = lookuppnat(rpn, NULL, 1,
+			     NULL, lvp, pvp);
+			 /* lvp is already held by the lookuppnat */
+			 VN_RELE(pvp);
+		 }
+	}
+out:
+	pn_free(rpn);
+	kmem_free(rpn, sizeof (pathname_t));
+	pn_free(&vpn);
+	return err;
+}
+
 static int
 lo_readdir(
 	vnode_t *vp,
@@ -953,12 +1137,107 @@ lo_readdir(
 	caller_context_t *ct,
 	int flags)
 {
+    int error;
+    vnode_t *rvp;
+    vnode_t *lvp;
+    uio_t u_uio;
+    iovec_t uvec;
+    caddr_t ubuf;
+    uio_t l_uio;
+    iovec_t lvec;
+    caddr_t lbuf;
+    size_t len;
+
 #ifdef LODEBUG
-	lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
+    lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
 #endif
-	vp = realvp(vp);
-	return (VOP_READDIR(vp, uiop, cr, eofp, ct, flags));
+    rvp = realvp(vp);
+	if ((error = lowervn(vp, cr, &lvp)) != 0)
+	    lvp = NULLVP;
+
+    if (!vfs_optionisset(vp->v_vfsp, MNTOPT_LOFS_UNION, NULL)) {
+    	return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
+    }
+
+    /* upper only */
+    if(rvp != NULLVP && lvp == NULLVP){
+    	return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
+    }
+
+    /* lower only */
+    if(rvp == NULLVP && lvp != NULLVP){
+    	return VOP_READDIR(lvp, uiop, cr, eofp, ct, flags);
+    }
+
+    /* upper and lower merge */
+    len = uiop->uio_iov->iov_len;
+
+    uvec.iov_base = ubuf = kmem_zalloc(len, KM_SLEEP);
+    uvec.iov_len = len;
+    
+    u_uio.uio_segflg = UIO_SYSSPACE;
+    u_uio.uio_iovcnt = 1;
+    u_uio.uio_fmode = uiop->uio_fmode;
+    u_uio.uio_extflg = UIO_COPY_CACHED;
+    u_uio.uio_resid = len;
+    u_uio.uio_loffset = uiop->uio_loffset;
+    
+    u_uio.uio_iov = &uvec;
+
+    lvec.iov_base = lbuf = kmem_zalloc(len, KM_SLEEP);
+    lvec.iov_len = len;
+
+    l_uio.uio_segflg = UIO_SYSSPACE;
+    l_uio.uio_iovcnt = 1;
+    l_uio.uio_fmode = uiop->uio_fmode;
+    l_uio.uio_extflg = UIO_COPY_CACHED;
+    l_uio.uio_resid = len;
+    l_uio.uio_loffset = uiop->uio_loffset;
+
+    l_uio.uio_iov = &lvec;
+
+    error = VOP_READDIR(rvp, &u_uio, cr, eofp, ct, flags);
+    if (error != 0)
+        goto out;
+
+    error = uiomove(ubuf, uvec.iov_base - ubuf, UIO_READ, uiop);
+    if (error != 0)
+        goto out;
+
+    uiop->uio_loffset = u_uio.uio_loffset;
+
+    error = VOP_READDIR(lvp, &l_uio, cr, eofp, ct, flags);
+    if (error != 0)
+        goto release;
+    
+    while(*lbuf != NULL) {
+        int found = 0;
+        caddr_t upper_dirs = ubuf;
+        while(*upper_dirs != NULL) {
+            if (!strcmp(((dirent_t*)lbuf)->d_name, ((dirent_t*)upper_dirs)->d_name)) {
+                found = 1;
+                break;
+            }
+            upper_dirs += sizeof(dirent_t);
+        }
+        if (!found)
+            error = uiomove(lbuf, sizeof(dirent_t), UIO_READ, uiop);
+        lbuf += sizeof(dirent_t);
+        if (error != 0)
+            goto release;
+    }
+
+    uiop->uio_loffset = l_uio.uio_loffset;
+
+release:
+    VN_RELE(lvp);
+out:
+    kmem_free(ubuf, len);
+    kmem_free(lbuf, len);
+
+    return error;
 }
+
 
 static int
 lo_rwlock(vnode_t *vp, int write_lock, caller_context_t *ct)

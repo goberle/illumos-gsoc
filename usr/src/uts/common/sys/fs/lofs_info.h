@@ -85,6 +85,8 @@ struct loinfo {
  */
 #define	MNTOPT_LOFS_NOSUB	"nosub"
 #define	MNTOPT_LOFS_SUB		"sub"
+#define MNTOPT_LOFS_NOUNION     "nounion"
+#define MNTOPT_LOFS_UNION       "union"
 
 /*
  * Flag values (for li_flag)

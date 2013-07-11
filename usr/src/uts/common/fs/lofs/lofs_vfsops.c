@@ -69,6 +69,8 @@ static char *xattr_cancel[] = { MNTOPT_NOXATTR, NULL };
 static char *noxattr_cancel[] = { MNTOPT_XATTR, NULL };
 static char *sub_cancel[] = { MNTOPT_LOFS_NOSUB, NULL };
 static char *nosub_cancel[] = { MNTOPT_LOFS_SUB, NULL };
+static char *union_cancel[] = { MNTOPT_LOFS_NOUNION, NULL };
+static char *nounion_cancel[] = { MNTOPT_LOFS_UNION, NULL };
 
 static mntopt_t mntopts[] = {
 /*
@@ -82,6 +84,10 @@ static mntopt_t mntopts[] = {
 	{ MNTOPT_LOFS_SUB,	sub_cancel,	NULL,		0,
 		(void *)0 },
 	{ MNTOPT_LOFS_NOSUB,	nosub_cancel,	NULL,		0,
+		(void *)0 },
+	{ MNTOPT_LOFS_UNION,	union_cancel,	NULL,		0,
+		(void *)0 },
+	{ MNTOPT_LOFS_NOUNION,	nounion_cancel,	NULL,		0,
 		(void *)0 },
 };
 
