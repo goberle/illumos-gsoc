@@ -401,6 +401,7 @@ typedef struct xoptattr {
 	uint64_t	xoa_generation;
 	uint8_t		xoa_offline;
 	uint8_t		xoa_sparse;
+	uint8_t 	xoa_whiteout;
 } xoptattr_t;
 
 /*
@@ -583,11 +584,12 @@ typedef vattr_t		vattr32_t;
 #define	XAT0_GEN	0x00004000	/* object generation number */
 #define	XAT0_OFFLINE	0x00008000	/* offline */
 #define	XAT0_SPARSE	0x00010000	/* sparse */
+#define	XAT0_WHITEOUT	0x00020000	/* whiteout */
 
 #define	XAT0_ALL_ATTRS	(XAT0_CREATETIME|XAT0_ARCHIVE|XAT0_SYSTEM| \
     XAT0_READONLY|XAT0_HIDDEN|XAT0_NOUNLINK|XAT0_IMMUTABLE|XAT0_APPENDONLY| \
     XAT0_NODUMP|XAT0_OPAQUE|XAT0_AV_QUARANTINED|  XAT0_AV_MODIFIED| \
-    XAT0_AV_SCANSTAMP|XAT0_REPARSE|XATO_GEN|XAT0_OFFLINE|XAT0_SPARSE)
+    XAT0_AV_SCANSTAMP|XAT0_REPARSE|XATO_GEN|XAT0_OFFLINE|XAT0_SPARSE|XAT0_WHITEOUT)
 
 /* Support for XAT_* optional attributes */
 #define	XVA_MASK		0xffffffff	/* Used to mask off 32 bits */
@@ -624,6 +626,7 @@ typedef vattr_t		vattr32_t;
 #define	XAT_GEN			((XAT0_INDEX << XVA_SHFT) | XAT0_GEN)
 #define	XAT_OFFLINE		((XAT0_INDEX << XVA_SHFT) | XAT0_OFFLINE)
 #define	XAT_SPARSE		((XAT0_INDEX << XVA_SHFT) | XAT0_SPARSE)
+#define	XAT_WHITEOUT		((XAT0_INDEX << XVA_SHFT) | XAT0_WHITEOUT)
 
 /*
  * The returned attribute map array (xva_rtnattrmap[]) is located past the
@@ -1176,12 +1179,14 @@ extern int	fop_retzcbuf(vnode_t *, xuio_t *, cred_t *, caller_context_t *);
 #define	LOOKUP_XATTR		0x02	/* lookup up extended attr dir */
 #define	CREATE_XATTR_DIR	0x04	/* Create extended attr dir */
 #define	LOOKUP_HAVE_SYSATTR_DIR	0x08	/* Already created virtual GFS dir */
+#define	LOOKUP_NOWHITEOUT	0x10	/* filter out whiteout nodes */
 
 /*
  * Flags for VOP_READDIR
  */
 #define	V_RDDIR_ENTFLAGS	0x01	/* request dirent flags */
 #define	V_RDDIR_ACCFILTER	0x02	/* filter out inaccessible dirents */
+#define	V_RDDIR_NOWHITEOUT	0x04	/* filter out whiteout dirents */
 
 /*
  * Flags for VOP_RWLOCK/VOP_RWUNLOCK

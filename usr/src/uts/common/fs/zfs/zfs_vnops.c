@@ -1160,11 +1160,12 @@ zfs_lookup(vnode_t *dvp, char *nm, vnode_t **vpp, struct pathname *pnp,
     int *direntflags, pathname_t *realpnp)
 {
 	znode_t *zdp = VTOZ(dvp);
+	znode_t *zp;
 	zfsvfs_t *zfsvfs = zdp->z_zfsvfs;
 	int	error = 0;
 
 	/* fast path */
-	if (!(flags & (LOOKUP_XATTR | FIGNORECASE))) {
+	if (!(flags & (LOOKUP_XATTR | FIGNORECASE | LOOKUP_NOWHITEOUT))) {
 
 		if (dvp->v_type != VDIR) {
 			return (SET_ERROR(ENOTDIR));
@@ -1267,6 +1268,15 @@ zfs_lookup(vnode_t *dvp, char *nm, vnode_t **vpp, struct pathname *pnp,
 	error = zfs_dirlook(zdp, nm, vpp, flags, direntflags, realpnp);
 	if (error == 0)
 		error = specvp_check(vpp, cr);
+
+	if ((flags & LOOKUP_NOWHITEOUT) && (!error)) {
+		zp = VTOZ(*vpp);
+
+		if (zp->z_pflags & ZFS_WHITEOUT) {
+			*vpp = NULL;
+			error = ENOENT;
+		}
+	}
 
 	ZFS_EXIT(zfsvfs);
 	return (error);
@@ -2253,6 +2263,17 @@ zfs_readdir(vnode_t *vp, uio_t *uio, cred_t *cr, int *eofp,
 			}
 		}
 
+		if (flags & V_RDDIR_NOWHITEOUT) {
+			znode_t	*ezp;
+			if (zfs_zget(zp->z_zfsvfs, objnum, &ezp) != 0)
+				goto skip_entry;
+			if (ezp->z_pflags & ZFS_WHITEOUT) {
+				VN_RELE(ZTOV(ezp));
+				goto skip_entry;
+			}
+			VN_RELE(ZTOV(ezp));
+		}
+
 		if (flags & V_RDDIR_ACCFILTER) {
 			/*
 			 * If we have no access at all, don't include
@@ -2572,6 +2593,12 @@ zfs_getattr(vnode_t *vp, vattr_t *vap, int flags, cred_t *cr,
 			    ((zp->z_pflags & ZFS_SPARSE) != 0);
 			XVA_SET_RTN(xvap, XAT_SPARSE);
 		}
+
+		if (XVA_ISSET_REQ(xvap, XAT_WHITEOUT)) {
+			xoap->xoa_whiteout =
+			    ((zp->z_pflags & ZFS_WHITEOUT) != 0);
+			XVA_SET_RTN(xvap, XAT_WHITEOUT);
+		}
 	}
 
 	ZFS_TIME_DECODE(&vap->va_atime, zp->z_atime);
@@ -2863,6 +2890,16 @@ top:
 			} else {
 				XVA_CLR_REQ(xvap, XAT_AV_MODIFIED);
 				XVA_SET_REQ(&tmpxvattr, XAT_AV_MODIFIED);
+			}
+		}
+
+		if (XVA_ISSET_REQ(xvap, XAT_WHITEOUT)) {
+			if (xoap->xoa_whiteout !=
+			    ((zp->z_pflags & ZFS_WHITEOUT) != 0)) {
+				need_policy = TRUE;
+			} else {
+				XVA_CLR_REQ(xvap, XAT_WHITEOUT);
+				XVA_SET_REQ(&tmpxvattr, XAT_WHITEOUT);
 			}
 		}
 
@@ -3174,6 +3211,9 @@ top:
 		}
 		if (XVA_ISSET_REQ(&tmpxvattr, XAT_AV_QUARANTINED)) {
 			XVA_SET_REQ(xvap, XAT_AV_QUARANTINED);
+		}
+		if (XVA_ISSET_REQ(&tmpxvattr, XAT_WHITEOUT)) {
+			XVA_SET_REQ(xvap, XAT_WHITEOUT);
 		}
 
 		if (XVA_ISSET_REQ(xvap, XAT_AV_SCANSTAMP))

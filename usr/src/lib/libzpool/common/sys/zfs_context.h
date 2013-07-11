@@ -409,6 +409,7 @@ typedef struct xoptattr {
 	uint8_t		xoa_reparse;
 	uint8_t		xoa_offline;
 	uint8_t		xoa_sparse;
+	uint8_t		xoa_whiteout;
 } xoptattr_t;
 
 typedef struct vattr {

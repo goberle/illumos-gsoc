@@ -69,6 +69,10 @@ static char *xattr_cancel[] = { MNTOPT_NOXATTR, NULL };
 static char *noxattr_cancel[] = { MNTOPT_XATTR, NULL };
 static char *sub_cancel[] = { MNTOPT_LOFS_NOSUB, NULL };
 static char *nosub_cancel[] = { MNTOPT_LOFS_SUB, NULL };
+static char *union_cancel[] = { MNTOPT_LOFS_NOUNION, NULL };
+static char *nounion_cancel[] = { MNTOPT_LOFS_UNION, NULL };
+static char *transparent_cancel[] = { MNTOPT_LOFS_NOTRANSPARENT, NULL };
+static char *notransparent_cancel[] = { MNTOPT_LOFS_TRANSPARENT, NULL };
 
 static mntopt_t mntopts[] = {
 /*
@@ -82,6 +86,14 @@ static mntopt_t mntopts[] = {
 	{ MNTOPT_LOFS_SUB,	sub_cancel,	NULL,		0,
 		(void *)0 },
 	{ MNTOPT_LOFS_NOSUB,	nosub_cancel,	NULL,		0,
+		(void *)0 },
+	{ MNTOPT_LOFS_UNION,	union_cancel,	NULL,		0,
+		(void *)0 },
+	{ MNTOPT_LOFS_NOUNION,	nounion_cancel,	NULL,		0,
+		(void *)0 },
+	{ MNTOPT_LOFS_TRANSPARENT,	transparent_cancel,	NULL,		0,
+		(void *)0 },
+	{ MNTOPT_LOFS_NOTRANSPARENT,	notransparent_cancel,	NULL,		0,
 		(void *)0 },
 };
 
@@ -385,6 +397,13 @@ lo_mount(struct vfs *vfsp,
 		li->li_flag |= LO_NOSUB;
 	}
 
+	if (vfs_optionisset(vfsp, MNTOPT_LOFS_TRANSPARENT, NULL)) {
+		li->li_flag |= LO_TRANSPARENT;
+	}
+
+	li->li_uid = crgetruid(cr);
+	li->li_gid = crgetrgid(cr);
+
 	/*
 	 * Propagate any VFS features
 	 */
@@ -404,7 +423,12 @@ lo_mount(struct vfs *vfsp,
 	/*
 	 * Make the root vnode
 	 */
-	srootvp = makelonode(realrootvp, li, 0);
+	if (vfs_optionisset(vfsp, MNTOPT_LOFS_UNION, NULL)) {
+		VN_HOLD(vp);
+		srootvp = makelonode(realrootvp, vp, li, 0);
+	} else {
+		srootvp = makelonode(realrootvp, NULLVP, li, 0);
+	}
 	srootvp->v_flag |= VROOT;
 	li->li_rootvp = srootvp;
 

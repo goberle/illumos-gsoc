@@ -175,6 +175,9 @@ zfs_log_xvattr(lr_attr_t *lrattr, xvattr_t *xvap)
 	if (XVA_ISSET_REQ(xvap, XAT_SPARSE))
 		*attrs |= (xoap->xoa_sparse == 0) ? 0 :
 		    XAT0_SPARSE;
+	if (XVA_ISSET_REQ(xvap, XAT_WHITEOUT))
+		*attrs |= (xoap->xoa_whiteout == 0) ? 0 :
+		    XAT0_WHITEOUT;
 }
 
 static void *

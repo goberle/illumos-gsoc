@@ -57,6 +57,7 @@ extern "C" {
 #define	A_GEN			"generation"
 #define	A_OFFLINE		"offline"
 #define	A_SPARSE		"sparse"
+#define	A_WHITEOUT		"whiteout"
 
 /* Attribute option for utilities */
 #define	O_HIDDEN	 "H"
@@ -72,6 +73,7 @@ extern "C" {
 #define	O_REPARSE_POINT	 "r"
 #define	O_OFFLINE	 "O"
 #define	O_SPARSE	 "s"
+#define	O_WHITEOUT	 "w"
 #define	O_NONE		 ""
 
 /* ownersid and groupsid are composed of two nvpairs */
@@ -100,6 +102,7 @@ typedef enum {
 	F_GEN,
 	F_OFFLINE,
 	F_SPARSE,
+	F_WHITEOUT,
 	F_ATTR_ALL
 } f_attr_t;
 

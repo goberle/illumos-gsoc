@@ -1098,6 +1098,11 @@ zfs_xvattr_set(znode_t *zp, xvattr_t *xvap, dmu_tx_t *tx)
 		    zp->z_pflags, tx);
 		XVA_SET_RTN(xvap, XAT_SPARSE);
 	}
+	if (XVA_ISSET_REQ(xvap, XAT_WHITEOUT)) {
+		ZFS_ATTR_SET(zp, ZFS_WHITEOUT, xoap->xoa_whiteout,
+		    zp->z_pflags, tx);
+		XVA_SET_RTN(xvap, XAT_WHITEOUT);
+	}
 }
 
 int
