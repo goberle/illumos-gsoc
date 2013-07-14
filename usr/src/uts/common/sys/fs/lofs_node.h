@@ -46,6 +46,7 @@ typedef struct lnode {
 	struct vnode	*lo_vp;		/* pointer to real vnode */
 	uint_t		lo_looping; 	/* looping flags (see below) */
 	struct vnode	*lo_vnode;	/* place holder vnode for file */
+	int 			status;
 } lnode_t;
 
 /*
@@ -65,6 +66,7 @@ typedef struct lnode {
 #define	ltov(lp)	(((lp)->lo_vnode))
 #define	vtol(vp)	((struct lnode *)((vp)->v_data))
 #define	realvp(vp)	(vtol(vp)->lo_vp)
+#define lstatus(vp)	(vtol(vp)->status)
 
 #ifdef _KERNEL
 extern vnode_t *makelonode(vnode_t *, struct loinfo *, int);

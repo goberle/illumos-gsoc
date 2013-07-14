@@ -1140,101 +1140,109 @@ lo_readdir(
     int error;
     vnode_t *rvp;
     vnode_t *lvp;
-    uio_t u_uio;
-    iovec_t uvec;
-    caddr_t ubuf;
-    uio_t l_uio;
-    iovec_t lvec;
-    caddr_t lbuf;
-    size_t len;
+    vnode_t *vpp;
+    offset_t uio_loffset_bk = 0;
+    uio_t uio_tmp;
+    iovec_t iovec_tmp;
+    size_t iovec_len;
+    caddr_t buf;
+    int loop;
 
 #ifdef LODEBUG
     lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
 #endif
     rvp = realvp(vp);
-	if ((error = lowervn(vp, cr, &lvp)) != 0)
-	    lvp = NULLVP;
 
     if (!vfs_optionisset(vp->v_vfsp, MNTOPT_LOFS_UNION, NULL)) {
     	return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
     }
 
+    /* lvp calc */
+    if ((error = lowervn(vp, cr, &lvp)) != 0)
+	    lvp = NULLVP;
+
     /* upper only */
-    if(rvp != NULLVP && lvp == NULLVP){
+    if (rvp != NULLVP && lvp == NULLVP) {
     	return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
     }
 
     /* lower only */
-    if(rvp == NULLVP && lvp != NULLVP){
-    	return VOP_READDIR(lvp, uiop, cr, eofp, ct, flags);
+    if (rvp == NULLVP && lvp != NULLVP) {
+    	error = VOP_READDIR(lvp, uiop, cr, eofp, ct, flags);
+    	goto out;
     }
 
-    /* upper and lower merge */
-    len = uiop->uio_iov->iov_len;
+    /* upper and lower */
+    if (uiop->uio_loffset == 0)
+    	lstatus(vp) = 0;
 
-    uvec.iov_base = ubuf = kmem_zalloc(len, KM_SLEEP);
-    uvec.iov_len = len;
-    
-    u_uio.uio_segflg = UIO_SYSSPACE;
-    u_uio.uio_iovcnt = 1;
-    u_uio.uio_fmode = uiop->uio_fmode;
-    u_uio.uio_extflg = UIO_COPY_CACHED;
-    u_uio.uio_resid = len;
-    u_uio.uio_loffset = uiop->uio_loffset;
-    
-    u_uio.uio_iov = &uvec;
+    if (lstatus(vp) == 0) {
+    	do {
+    		/*
+    		 * Loop because if all entries ar not moved to uiop, there may be still room for other entries
+    		 */
+    		loop = 0;
 
-    lvec.iov_base = lbuf = kmem_zalloc(len, KM_SLEEP);
-    lvec.iov_len = len;
+			/* prepare UIO temp struct */
+			iovec_len = uiop->uio_iov->iov_len;
+			iovec_tmp.iov_base = buf = kmem_zalloc(iovec_len, KM_SLEEP);
+		    iovec_tmp.iov_len = iovec_len;
+		    
+		    uio_tmp.uio_iov = &iovec_tmp;
+		    uio_tmp.uio_segflg = UIO_SYSSPACE;
+		    uio_tmp.uio_iovcnt = 1;
+		    uio_tmp.uio_fmode = uiop->uio_fmode;
+		    uio_tmp.uio_extflg = UIO_COPY_CACHED;
+		    uio_tmp.uio_resid = uiop->uio_resid;
+		    uio_tmp.uio_loffset = uiop->uio_loffset;
+		    
+		    /* lower half readir */
+			error = VOP_READDIR(lvp, &uio_tmp, cr, eofp, ct, flags);
+			if (error)
+				goto out;
 
-    l_uio.uio_segflg = UIO_SYSSPACE;
-    l_uio.uio_iovcnt = 1;
-    l_uio.uio_fmode = uiop->uio_fmode;
-    l_uio.uio_extflg = UIO_COPY_CACHED;
-    l_uio.uio_resid = len;
-    l_uio.uio_loffset = uiop->uio_loffset;
+			/* does entries exists in upper ? if no, entries saved in uiop */
+			while (*buf != NULL) {
+				error = VOP_LOOKUP(rvp, ((dirent_t*)buf)->d_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL);
+				if (error) {
+					error = uiomove(buf, sizeof(dirent_t), UIO_READ, uiop);
+					if (error) {
+						kmem_free(buf, iovec_len);
+						goto out;
+					}
+				} else {
+					loop = 1;
+				}
+				buf += sizeof(dirent_t);
+			}
 
-    l_uio.uio_iov = &lvec;
+			uiop->uio_loffset = uio_tmp.uio_loffset;
 
-    error = VOP_READDIR(rvp, &u_uio, cr, eofp, ct, flags);
-    if (error != 0)
-        goto out;
+			if(uiop->uio_resid == 0) {
+				kmem_free(buf, iovec_len);
+				goto out;
+			}
 
-    error = uiomove(ubuf, uvec.iov_base - ubuf, UIO_READ, uiop);
-    if (error != 0)
-        goto out;
+			kmem_free(buf, iovec_len);
 
-    uiop->uio_loffset = u_uio.uio_loffset;
+		} while (loop);
 
-    error = VOP_READDIR(lvp, &l_uio, cr, eofp, ct, flags);
-    if (error != 0)
-        goto release;
-    
-    while(*lbuf != NULL) {
-        int found = 0;
-        caddr_t upper_dirs = ubuf;
-        while(*upper_dirs != NULL) {
-            if (!strcmp(((dirent_t*)lbuf)->d_name, ((dirent_t*)upper_dirs)->d_name)) {
-                found = 1;
-                break;
-            }
-            upper_dirs += sizeof(dirent_t);
-        }
-        if (!found)
-            error = uiomove(lbuf, sizeof(dirent_t), UIO_READ, uiop);
-        lbuf += sizeof(dirent_t);
-        if (error != 0)
-            goto release;
+    	lstatus(vp) = 1;
     }
 
-    uiop->uio_loffset = l_uio.uio_loffset;
+    if (lstatus(vp) == 1) {
+    	lstatus(vp) = 2;
+    	uio_loffset_bk = uiop->uio_loffset;
+    	uiop->uio_loffset = 0;
+    }
 
-release:
-    VN_RELE(lvp);
+    error = VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
+
+    if (uiop->uio_loffset == 0)
+    	uiop->uio_loffset = uio_loffset_bk;
+
 out:
-    kmem_free(ubuf, len);
-    kmem_free(lbuf, len);
-
+	VN_RELE(lvp);
     return error;
 }
 
