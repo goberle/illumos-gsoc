@@ -1158,22 +1158,22 @@ lo_readdir(
 		return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
 	}
 
-    /* lvp calc */
+	/* lvp calc */
 	if ((error = lowervn(vp, cr, &lvp)) != 0)
 		lvp = NULLVP;
 
-    /* upper only */
+	/* upper only */
 	if (rvp != NULLVP && lvp == NULLVP) {
 		return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
 	}
 
-    /* lower only */
+	/* lower only */
 	if (rvp == NULLVP && lvp != NULLVP) {
 		error = VOP_READDIR(lvp, uiop, cr, eofp, ct, flags);
 		goto out;
 	}
 
-    /* upper and lower */
+	/* upper and lower */
 	if (uiop->uio_loffset == 0)
 		lstatus(vp) = 0;
 
@@ -1191,7 +1191,7 @@ lo_readdir(
 		uio.uio_resid = uiop->uio_resid;
 		uio.uio_loffset = uiop->uio_loffset;
 
-	    /* lower readir */
+		/* lower readir */
 		error = VOP_READDIR(lvp, &uio, cr, eofp, ct, flags);
 		if (error) {
 			kmem_free(mem, len);
