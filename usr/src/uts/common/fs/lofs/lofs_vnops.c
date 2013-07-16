@@ -1137,60 +1137,60 @@ lo_readdir(
 	caller_context_t *ct,
 	int flags)
 {
-    int error;
-    vnode_t *rvp;
-    vnode_t *lvp;
-    vnode_t *vpp;
-    offset_t uio_loffset_bk = 0;
-    uio_t uio;
-    iovec_t iovec;
-    size_t len;
-    caddr_t mem;
-    dirent64_t *buf;
-    dirent64_t *buf_size;
+	int error;
+	vnode_t *rvp;
+	vnode_t *lvp;
+	vnode_t *vpp;
+	offset_t uio_loffset_bk = 0;
+	uio_t uio;
+	iovec_t iovec;
+	size_t len;
+	caddr_t mem;
+	dirent64_t *buf;
+	dirent64_t *buf_size;
 
 #ifdef LODEBUG
-    lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
+	lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
 #endif
-    rvp = realvp(vp);
+	rvp = realvp(vp);
 
-    if (!vfs_optionisset(vp->v_vfsp, MNTOPT_LOFS_UNION, NULL)) {
-    	return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
-    }
+	if (!vfs_optionisset(vp->v_vfsp, MNTOPT_LOFS_UNION, NULL)) {
+		return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
+	}
 
     /* lvp calc */
-    if ((error = lowervn(vp, cr, &lvp)) != 0)
-	    lvp = NULLVP;
+	if ((error = lowervn(vp, cr, &lvp)) != 0)
+		lvp = NULLVP;
 
     /* upper only */
-    if (rvp != NULLVP && lvp == NULLVP) {
-    	return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
-    }
+	if (rvp != NULLVP && lvp == NULLVP) {
+		return VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
+	}
 
     /* lower only */
-    if (rvp == NULLVP && lvp != NULLVP) {
-    	error = VOP_READDIR(lvp, uiop, cr, eofp, ct, flags);
-    	goto out;
-    }
+	if (rvp == NULLVP && lvp != NULLVP) {
+		error = VOP_READDIR(lvp, uiop, cr, eofp, ct, flags);
+		goto out;
+	}
 
     /* upper and lower */
-    if (uiop->uio_loffset == 0)
-    	lstatus(vp) = 0;
+	if (uiop->uio_loffset == 0)
+		lstatus(vp) = 0;
 
-    if (lstatus(vp) == 0) {
+	if (lstatus(vp) == 0) {
 		/* prepare UIO temp struct */
 		len = uiop->uio_iov->iov_len;
 		iovec.iov_base = mem = kmem_zalloc(len, KM_SLEEP);
-	    iovec.iov_len = len;
-	    
-	    uio.uio_iov = &iovec;
-	    uio.uio_segflg = UIO_SYSSPACE;
-	    uio.uio_iovcnt = 1;
-	    uio.uio_fmode = uiop->uio_fmode;
-	    uio.uio_extflg = uiop->uio_extflg;
-	    uio.uio_resid = uiop->uio_resid;
-	    uio.uio_loffset = uiop->uio_loffset;
-	    
+		iovec.iov_len = len;
+
+		uio.uio_iov = &iovec;
+		uio.uio_segflg = UIO_SYSSPACE;
+		uio.uio_iovcnt = 1;
+		uio.uio_fmode = uiop->uio_fmode;
+		uio.uio_extflg = uiop->uio_extflg;
+		uio.uio_resid = uiop->uio_resid;
+		uio.uio_loffset = uiop->uio_loffset;
+
 	    /* lower readir */
 		error = VOP_READDIR(lvp, &uio, cr, eofp, ct, flags);
 		if (error) {
@@ -1201,17 +1201,18 @@ lo_readdir(
 		/* 
 		 * does entries exists in upper ? if no, entries saved in uiop 
 		 * TODO : handle edirent_t format (V_RDDIR_ENTFLAGS flag)
+		 * TODO : handle whiteout
 		 */
 		buf = (dirent64_t*)mem;
 		buf_size = (dirent64_t*)((intptr_t)buf + (len - uio.uio_resid));
 		while (buf < buf_size) {
-			if (VOP_LOOKUP(rvp, buf->d_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL)) {
-				if (error = uiomove(buf, buf->d_reclen, UIO_READ, uiop)) {
-					kmem_free(mem, len);
-					goto out;
-				}
-			}
-			buf = (dirent64_t*)((intptr_t)buf + buf->d_reclen);
+		    if (VOP_LOOKUP(rvp, buf->d_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL)) {
+		 		if (error = uiomove(buf, buf->d_reclen, UIO_READ, uiop)) {
+		 			kmem_free(mem, len);
+		 			goto out;
+		 		}
+		 	}
+		 	buf = (dirent64_t*)((intptr_t)buf + buf->d_reclen);
 		}
 
 		uiop->uio_loffset = uio.uio_loffset;
@@ -1224,24 +1225,24 @@ lo_readdir(
 		lstatus(vp) = 1;
 
 		if (uiop->uio_resid <= (uiop->uio_resid & (DEV_BSIZE -1)))
-			goto out;
+		 	goto out;
 
-    }
+	}
 
-    if (lstatus(vp) == 1) {
-    	lstatus(vp) = 2;
-    	uio_loffset_bk = uiop->uio_loffset;
-    	uiop->uio_loffset = 0;
-    }
+	if (lstatus(vp) == 1) {
+		lstatus(vp) = 2;
+		uio_loffset_bk = uiop->uio_loffset;
+		uiop->uio_loffset = 0;
+	}
 
-    error = VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
+	error = VOP_READDIR(rvp, uiop, cr, eofp, ct, flags);
 
-    if (uiop->uio_loffset == 0)
-    	uiop->uio_loffset = uio_loffset_bk;
+	if (uiop->uio_loffset == 0)
+		uiop->uio_loffset = uio_loffset_bk;
 
 out:
 	VN_RELE(lvp);
-    return error;
+	return error;
 }
 
 
