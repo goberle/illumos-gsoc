@@ -1142,11 +1142,12 @@ lo_readdir(
     vnode_t *lvp;
     vnode_t *vpp;
     offset_t uio_loffset_bk = 0;
-    uio_t uio_tmp;
-    iovec_t iovec_tmp;
-    size_t iovec_len;
-    caddr_t buf;
-    int loop;
+    uio_t uio;
+    iovec_t iovec;
+    size_t len;
+    caddr_t mem;
+    dirent64_t *buf;
+    dirent64_t *buf_size;
 
 #ifdef LODEBUG
     lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
@@ -1177,57 +1178,54 @@ lo_readdir(
     	lstatus(vp) = 0;
 
     if (lstatus(vp) == 0) {
-    	do {
-    		/*
-    		 * Loop because if all entries ar not moved to uiop, there may be still room for other entries
-    		 */
-    		loop = 0;
+		/* prepare UIO temp struct */
+		len = uiop->uio_iov->iov_len;
+		iovec.iov_base = mem = kmem_zalloc(len, KM_SLEEP);
+	    iovec.iov_len = len;
+	    
+	    uio.uio_iov = &iovec;
+	    uio.uio_segflg = UIO_SYSSPACE;
+	    uio.uio_iovcnt = 1;
+	    uio.uio_fmode = uiop->uio_fmode;
+	    uio.uio_extflg = uiop->uio_extflg;
+	    uio.uio_resid = uiop->uio_resid;
+	    uio.uio_loffset = uiop->uio_loffset;
+	    
+	    /* lower readir */
+		error = VOP_READDIR(lvp, &uio, cr, eofp, ct, flags);
+		if (error) {
+			kmem_free(mem, len);
+			goto out;
+		}
 
-			/* prepare UIO temp struct */
-			iovec_len = uiop->uio_iov->iov_len;
-			iovec_tmp.iov_base = buf = kmem_zalloc(iovec_len, KM_SLEEP);
-		    iovec_tmp.iov_len = iovec_len;
-		    
-		    uio_tmp.uio_iov = &iovec_tmp;
-		    uio_tmp.uio_segflg = UIO_SYSSPACE;
-		    uio_tmp.uio_iovcnt = 1;
-		    uio_tmp.uio_fmode = uiop->uio_fmode;
-		    uio_tmp.uio_extflg = UIO_COPY_CACHED;
-		    uio_tmp.uio_resid = uiop->uio_resid;
-		    uio_tmp.uio_loffset = uiop->uio_loffset;
-		    
-		    /* lower half readir */
-			error = VOP_READDIR(lvp, &uio_tmp, cr, eofp, ct, flags);
-			if (error)
-				goto out;
-
-			/* does entries exists in upper ? if no, entries saved in uiop */
-			while (*buf != NULL) {
-				error = VOP_LOOKUP(rvp, ((dirent_t*)buf)->d_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL);
-				if (error) {
-					error = uiomove(buf, sizeof(dirent_t), UIO_READ, uiop);
-					if (error) {
-						kmem_free(buf, iovec_len);
-						goto out;
-					}
-				} else {
-					loop = 1;
+		/* 
+		 * does entries exists in upper ? if no, entries saved in uiop 
+		 * TODO : handle edirent_t format (V_RDDIR_ENTFLAGS flag)
+		 */
+		buf = (dirent64_t*)mem;
+		buf_size = (dirent64_t*)((intptr_t)buf + (len - uio.uio_resid));
+		while (buf < buf_size) {
+			if (VOP_LOOKUP(rvp, buf->d_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL)) {
+				if (error = uiomove(buf, buf->d_reclen, UIO_READ, uiop)) {
+					kmem_free(mem, len);
+					goto out;
 				}
-				buf += sizeof(dirent_t);
 			}
+			buf = (dirent64_t*)((intptr_t)buf + buf->d_reclen);
+		}
 
-			uiop->uio_loffset = uio_tmp.uio_loffset;
+		uiop->uio_loffset = uio.uio_loffset;
 
-			if(uiop->uio_resid == 0) {
-				kmem_free(buf, iovec_len);
-				goto out;
-			}
+		kmem_free(mem, len);
 
-			kmem_free(buf, iovec_len);
+		if (*eofp != 1)
+			goto out;
 
-		} while (loop);
+		lstatus(vp) = 1;
 
-    	lstatus(vp) = 1;
+		if (uiop->uio_resid <= (uiop->uio_resid & (DEV_BSIZE -1)))
+			goto out;
+
     }
 
     if (lstatus(vp) == 1) {
