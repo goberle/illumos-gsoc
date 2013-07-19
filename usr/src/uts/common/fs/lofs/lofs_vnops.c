@@ -37,6 +37,7 @@
 #include <sys/pathname.h>
 #include <sys/debug.h>
 #include <sys/cmn_err.h>
+#include <sys/extdirent.h>
 #include <sys/fs/lofs_node.h>
 #include <sys/fs/lofs_info.h>
 #include <fs/fs_subr.h>
@@ -1148,6 +1149,8 @@ lo_readdir(
 	caddr_t mem;
 	dirent64_t *buf;
 	dirent64_t *buf_size;
+	edirent_t *ebuf;
+	edirent_t *ebuf_size;
 
 #ifdef LODEBUG
 	lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
@@ -1174,63 +1177,66 @@ lo_readdir(
 	}
 
 	/* upper and lower */
-	if (uiop->uio_loffset == 0)
-		lstatus(vp) = 0;
+	if (uiop->uio_loffset <= 0) {
+		do {
+			/* prepare UIO temp struct */
+			len = uiop->uio_iov->iov_len;
 
-	if (lstatus(vp) == 0) {
-		/* prepare UIO temp struct */
-		len = uiop->uio_iov->iov_len;
-		iovec.iov_base = mem = kmem_zalloc(len, KM_SLEEP);
-		iovec.iov_len = len;
+			iovec.iov_base = mem = kmem_zalloc(len, KM_SLEEP);
+			iovec.iov_len = len;
+			uio.uio_iov = &iovec;
+			uio.uio_segflg = UIO_SYSSPACE;
+			uio.uio_iovcnt = 1;
+			uio.uio_fmode = uiop->uio_fmode;
+			uio.uio_extflg = uiop->uio_extflg;
+			uio.uio_resid = uiop->uio_resid;
+			uio.uio_loffset = -uiop->uio_loffset;
 
-		uio.uio_iov = &iovec;
-		uio.uio_segflg = UIO_SYSSPACE;
-		uio.uio_iovcnt = 1;
-		uio.uio_fmode = uiop->uio_fmode;
-		uio.uio_extflg = uiop->uio_extflg;
-		uio.uio_resid = uiop->uio_resid;
-		uio.uio_loffset = uiop->uio_loffset;
+			/* lower readir */
+			error = VOP_READDIR(lvp, &uio, cr, eofp, ct, flags);
+			if (error) {
+				kmem_free(mem, len);
+				goto out;
+			}
 
-		/* lower readir */
-		error = VOP_READDIR(lvp, &uio, cr, eofp, ct, flags);
-		if (error) {
+			/* 
+			 * does entries exists in upper ? if no, entries saved in uiop 
+			 * TODO : handle whiteout
+			 */
+			if (flags & V_RDDIR_ENTFLAGS) {
+				ebuf = (edirent_t*)mem;
+				ebuf_size = (edirent_t*)((intptr_t)ebuf + (len - uio.uio_resid));
+				while (ebuf < ebuf_size) {
+				    if (VOP_LOOKUP(rvp, ebuf->ed_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL)) {
+				 		if (error = uiomove(ebuf, ebuf->ed_reclen, UIO_READ, uiop)) {
+				 			kmem_free(mem, len);
+				 			goto out;
+				 		}
+				 	}
+				 	ebuf = (edirent_t*)((intptr_t)ebuf + ebuf->ed_reclen);
+				}
+			} else {
+				buf = (dirent64_t*)mem;
+				buf_size = (dirent64_t*)((intptr_t)buf + (len - uio.uio_resid));
+				while (buf < buf_size) {
+				    if (VOP_LOOKUP(rvp, buf->d_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL)) {
+				 		if (error = uiomove(buf, buf->d_reclen, UIO_READ, uiop)) {
+				 			kmem_free(mem, len);
+				 			goto out;
+				 		}
+				 	}
+				 	buf = (dirent64_t*)((intptr_t)buf + buf->d_reclen);
+				}
+			}
+
+			uiop->uio_loffset = -uio.uio_loffset;
 			kmem_free(mem, len);
-			goto out;
-		}
 
-		/* 
-		 * does entries exists in upper ? if no, entries saved in uiop 
-		 * TODO : handle edirent_t format (V_RDDIR_ENTFLAGS flag)
-		 * TODO : handle whiteout
-		 */
-		buf = (dirent64_t*)mem;
-		buf_size = (dirent64_t*)((intptr_t)buf + (len - uio.uio_resid));
-		while (buf < buf_size) {
-		    if (VOP_LOOKUP(rvp, buf->d_name, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL)) {
-		 		if (error = uiomove(buf, buf->d_reclen, UIO_READ, uiop)) {
-		 			kmem_free(mem, len);
-		 			goto out;
-		 		}
-		 	}
-		 	buf = (dirent64_t*)((intptr_t)buf + buf->d_reclen);
-		}
+		} while((*eofp != 1) && (len == uiop->uio_resid));
 
-		uiop->uio_loffset = uio.uio_loffset;
-
-		kmem_free(mem, len);
-
-		if (*eofp != 1)
+		if ((*eofp != 1) || (uiop->uio_resid <= (uiop->uio_resid & (DEV_BSIZE -1))))
 			goto out;
 
-		lstatus(vp) = 1;
-
-		if (uiop->uio_resid <= (uiop->uio_resid & (DEV_BSIZE -1)))
-		 	goto out;
-
-	}
-
-	if (lstatus(vp) == 1) {
-		lstatus(vp) = 2;
 		uio_loffset_bk = uiop->uio_loffset;
 		uiop->uio_loffset = 0;
 	}

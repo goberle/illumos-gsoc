@@ -46,7 +46,6 @@ typedef struct lnode {
 	struct vnode	*lo_vp;		/* pointer to real vnode */
 	uint_t		lo_looping; 	/* looping flags (see below) */
 	struct vnode	*lo_vnode;	/* place holder vnode for file */
-	int 			status;
 } lnode_t;
 
 /*
