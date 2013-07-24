@@ -63,6 +63,7 @@ extern "C" {
 #define	ZFS_REPARSE		0x0000080000000000
 #define	ZFS_OFFLINE		0x0000100000000000
 #define	ZFS_SPARSE		0x0000200000000000
+#define	ZFS_WHITEOUT		0X0000400000000000
 
 #define	ZFS_ATTR_SET(zp, attr, value, pflags, tx) \
 { \

@@ -771,11 +771,43 @@ lo_remove(
 	caller_context_t *ct,
 	int flags)
 {
+	int error;
+	vnode_t *ldvp;
+	vnode_t *udvp;
+	vnode_t *vpp;
+	xvattr_t xvattr;
+	xoptattr_t *xoap;
+
 #ifdef LODEBUG
 	lo_dprint(4, "lo_remove vp %p realvp %p\n", dvp, realvp(dvp));
 #endif
-	dvp = realvp(dvp);
-	return (VOP_REMOVE(dvp, nm, cr, ct, flags));
+
+	udvp = realvp(dvp);
+	if (!vfs_optionisset(dvp->v_vfsp, MNTOPT_LOFS_UNION, NULL))
+		return (VOP_REMOVE(udvp, nm, cr, ct, flags));
+			
+	if ((error = lowervn(dvp, cr, &ldvp)) != 0)
+		ldvp = NULLVP;
+	
+	if (ldvp != NULLVP) {
+		error = VOP_LOOKUP(ldvp, nm, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL);
+		if (!error) {
+			xva_init(&xvattr);
+			xoap = xva_getxoptattr(&xvattr);
+			ASSERT(xoap);
+			XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
+
+			error = VOP_SETATTR(vpp, xvattr, 0, cr, ct);
+			if (error)
+				goto out;
+		}
+	}
+
+	if (udvp != NULLVP)
+		error = VOP_REMOVE(udvp, nm, cr, ct, flags);
+
+out:
+	return (error);
 }
 
 static int

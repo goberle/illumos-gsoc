@@ -234,6 +234,9 @@ xattr_fill_nvlist(vnode_t *vp, xattr_view_t xattr_view, nvlist_t *nvlp,
 		case F_SPARSE:
 			XVA_SET_REQ(&xvattr, XAT_SPARSE);
 			break;
+		case F_WHITEOUT:
+			XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
+			break;
 		default:
 			break;
 		}
@@ -335,6 +338,11 @@ xattr_fill_nvlist(vnode_t *vp, xattr_view_t xattr_view, nvlist_t *nvlp,
 			VERIFY(nvlist_add_boolean_value(nvlp,
 			    attr_to_name(F_SPARSE),
 			    xoap->xoa_sparse) == 0);
+		}
+		if (XVA_ISSET_RTN(&xvattr, XAT_WHITEOUT)) {
+			VERIFY(nvlist_add_boolean_value(nvlp,
+			    attr_to_name(F_WHITEOUT),
+			    xoap->xoa_whiteout) == 0);
 		}
 	}
 	/*
@@ -721,6 +729,10 @@ xattr_file_write(vnode_t *vp, uio_t *uiop, int ioflag, cred_t *cr,
 			XVA_SET_REQ(&xvattr, XAT_SPARSE);
 			xoap->xoa_sparse = value;
 			break;
+		case F_WHITEOUT:
+			XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
+			xoap->xoa_whiteout = value;
+			break;
 		default:
 			break;
 		}
@@ -864,6 +876,7 @@ xattr_copy(vnode_t *sdvp, char *snm, vnode_t *tdvp, char *tnm,
 	XVA_SET_REQ(&xvattr, XAT_REPARSE);
 	XVA_SET_REQ(&xvattr, XAT_OFFLINE);
 	XVA_SET_REQ(&xvattr, XAT_SPARSE);
+	XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
 
 	pdvp = gfs_file_parent(sdvp);
 	error = VOP_GETATTR(pdvp, &xvattr.xva_vattr, 0, cr, ct);

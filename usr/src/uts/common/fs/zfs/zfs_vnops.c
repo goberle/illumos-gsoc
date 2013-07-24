@@ -2572,6 +2572,12 @@ zfs_getattr(vnode_t *vp, vattr_t *vap, int flags, cred_t *cr,
 			    ((zp->z_pflags & ZFS_SPARSE) != 0);
 			XVA_SET_RTN(xvap, XAT_SPARSE);
 		}
+
+		if (XVA_ISSET_REQ(xvap, XAT_WHITEOUT)) {
+			xoap->xoa_whiteout =
+			    ((zp->z_pflags & ZFS_WHITEOUT) != 0);
+			XVA_SET_RTN(xvap, XAT_WHITEOUT);
+		}
 	}
 
 	ZFS_TIME_DECODE(&vap->va_atime, zp->z_atime);
