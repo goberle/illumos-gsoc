@@ -1185,6 +1185,7 @@ extern int	fop_retzcbuf(vnode_t *, xuio_t *, cred_t *, caller_context_t *);
  */
 #define	V_RDDIR_ENTFLAGS	0x01	/* request dirent flags */
 #define	V_RDDIR_ACCFILTER	0x02	/* filter out inaccessible dirents */
+#define	V_RDDIR_NOWHITEOUT	0x04	/* filter out whiteout dirents */
 
 /*
  * Flags for VOP_RWLOCK/VOP_RWUNLOCK

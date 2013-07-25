@@ -796,10 +796,12 @@ lo_remove(
 			xoap = xva_getxoptattr(&xvattr);
 			ASSERT(xoap);
 			XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
+			xoap->xoa_whiteout = 1;
 
-			error = VOP_SETATTR(vpp, xvattr, 0, cr, ct);
+			error = VOP_SETATTR(vpp, &xvattr.xva_vattr, 0, cr, ct);
 			if (error)
 				goto out;
+			printf("LOFS REMOVE : WHITEOUTED\n");
 		}
 	}
 
@@ -1171,6 +1173,7 @@ lo_readdir(
 	int flags)
 {
 	int error;
+	int lflags;
 	vnode_t *rvp;
 	vnode_t *lvp;
 	vnode_t *vpp;
@@ -1183,6 +1186,8 @@ lo_readdir(
 	dirent64_t *buf_size;
 	edirent_t *ebuf;
 	edirent_t *ebuf_size;
+	xvattr_t xvattr;
+	xoptattr_t *xoap;
 
 #ifdef LODEBUG
 	lo_dprint(4, "lo_readdir vp %p realvp %p\n", vp, realvp(vp));
@@ -1225,7 +1230,9 @@ lo_readdir(
 			uio.uio_loffset = -uiop->uio_loffset;
 
 			/* lower readir */
-			error = VOP_READDIR(lvp, &uio, cr, eofp, ct, flags);
+			lflags = flags;
+			lflags |= V_RDDIR_NOWHITEOUT;
+			error = VOP_READDIR(lvp, &uio, cr, eofp, ct, lflags);
 			if (error) {
 				kmem_free(mem, len);
 				goto out;

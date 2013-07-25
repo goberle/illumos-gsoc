@@ -2253,6 +2253,19 @@ zfs_readdir(vnode_t *vp, uio_t *uio, cred_t *cr, int *eofp,
 			}
 		}
 
+		if (flags & V_RDDIR_NOWHITEOUT) {
+			znode_t	*ezp;
+			if (zfs_zget(zp->z_zfsvfs, objnum, &ezp) != 0)
+				goto skip_entry;
+			if (ezp->z_pflags & ZFS_WHITEOUT) {
+				printf("ZFS WHITEOUT\n");
+				VN_RELE(ZTOV(ezp));
+				goto skip_entry;
+			}
+			printf("Zfs NO WHITEOUT\n");
+			VN_RELE(ZTOV(ezp));
+		}
+
 		if (flags & V_RDDIR_ACCFILTER) {
 			/*
 			 * If we have no access at all, don't include
@@ -2872,6 +2885,16 @@ top:
 			}
 		}
 
+		if (XVA_ISSET_REQ(xvap, XAT_WHITEOUT)) {
+			if (xoap->xoa_whiteout !=
+			    ((zp->z_pflags & ZFS_WHITEOUT) != 0)) {
+				need_policy = TRUE;
+			} else {
+				XVA_CLR_REQ(xvap, XAT_WHITEOUT);
+				XVA_SET_REQ(&tmpxvattr, XAT_WHITEOUT);
+			}
+		}
+
 		if (XVA_ISSET_REQ(xvap, XAT_AV_QUARANTINED)) {
 			if ((vp->v_type != VREG &&
 			    xoap->xoa_av_quarantined) ||
@@ -3180,6 +3203,9 @@ top:
 		}
 		if (XVA_ISSET_REQ(&tmpxvattr, XAT_AV_QUARANTINED)) {
 			XVA_SET_REQ(xvap, XAT_AV_QUARANTINED);
+		}
+		if (XVA_ISSET_REQ(&tmpxvattr, XAT_WHITEOUT)) {
+			XVA_SET_REQ(xvap, XAT_WHITEOUT);
 		}
 
 		if (XVA_ISSET_REQ(xvap, XAT_AV_SCANSTAMP))
