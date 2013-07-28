@@ -1160,11 +1160,12 @@ zfs_lookup(vnode_t *dvp, char *nm, vnode_t **vpp, struct pathname *pnp,
     int *direntflags, pathname_t *realpnp)
 {
 	znode_t *zdp = VTOZ(dvp);
+	znode_t *zp;
 	zfsvfs_t *zfsvfs = zdp->z_zfsvfs;
 	int	error = 0;
 
 	/* fast path */
-	if (!(flags & (LOOKUP_XATTR | FIGNORECASE))) {
+	if (!(flags & (LOOKUP_XATTR | FIGNORECASE | LOOKUP_NOWHITEOUT))) {
 
 		if (dvp->v_type != VDIR) {
 			return (SET_ERROR(ENOTDIR));
@@ -1267,6 +1268,15 @@ zfs_lookup(vnode_t *dvp, char *nm, vnode_t **vpp, struct pathname *pnp,
 	error = zfs_dirlook(zdp, nm, vpp, flags, direntflags, realpnp);
 	if (error == 0)
 		error = specvp_check(vpp, cr);
+
+	if ((flags & LOOKUP_NOWHITEOUT) && (!error)) {
+		zp = VTOZ(*vpp);
+
+		if (zp->z_pflags & ZFS_WHITEOUT) {
+			*vpp = NULL;
+			error = ENOENT;
+		}
+	}
 
 	ZFS_EXIT(zfsvfs);
 	return (error);
@@ -2258,11 +2268,9 @@ zfs_readdir(vnode_t *vp, uio_t *uio, cred_t *cr, int *eofp,
 			if (zfs_zget(zp->z_zfsvfs, objnum, &ezp) != 0)
 				goto skip_entry;
 			if (ezp->z_pflags & ZFS_WHITEOUT) {
-				printf("ZFS WHITEOUT\n");
 				VN_RELE(ZTOV(ezp));
 				goto skip_entry;
 			}
-			printf("Zfs NO WHITEOUT\n");
 			VN_RELE(ZTOV(ezp));
 		}
 

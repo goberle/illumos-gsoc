@@ -308,7 +308,7 @@ lo_lookup(
 	pathname_t *realpnp)
 {
 	vnode_t *vp = NULL, *tvp = NULL, *nonlovp;
-	int error, is_indirectloop;
+	int error, is_indirectloop, lflags;
 	vnode_t *realdvp = realvp(dvp);
 	struct loinfo *li = vtoli(dvp->v_vfsp);
 	int looping = 0;
@@ -356,7 +356,8 @@ lo_lookup(
 				goto out;
 			}
 
-			error = VOP_LOOKUP(ldvp, nm, &vp, pnp, flags, rdir, cr,
+			lflags = flags | LOOKUP_NOWHITEOUT;
+			error = VOP_LOOKUP(ldvp, nm, &vp, pnp, lflags, rdir, cr,
 				ct, direntflags, realpnp);
 
         	VN_RELE(ldvp);
@@ -801,7 +802,6 @@ lo_remove(
 			error = VOP_SETATTR(vpp, &xvattr.xva_vattr, 0, cr, ct);
 			if (error)
 				goto out;
-			printf("LOFS REMOVE : WHITEOUTED\n");
 		}
 	}
 
@@ -809,6 +809,7 @@ lo_remove(
 		error = VOP_REMOVE(udvp, nm, cr, ct, flags);
 
 out:
+	VN_RELE(ldvp);
 	return (error);
 }
 
@@ -999,7 +1000,13 @@ lo_rmdir(
 	caller_context_t *ct,
 	int flags)
 {
+	int error;
 	vnode_t *rvp = cdir;
+	vnode_t *ldvp;
+	vnode_t *udvp;
+	vnode_t *vpp;
+	xvattr_t xvattr;
+	xoptattr_t *xoap;
 
 #ifdef LODEBUG
 	lo_dprint(4, "lo_rmdir vp %p realvp %p\n", dvp, realvp(dvp));
@@ -1007,8 +1014,36 @@ lo_rmdir(
 	/* if cdir is lofs vnode ptr get its real vnode ptr */
 	if (vn_matchops(dvp, vn_getops(rvp)))
 		(void) lo_realvp(cdir, &rvp, ct);
-	dvp = realvp(dvp);
-	return (VOP_RMDIR(dvp, nm, rvp, cr, ct, flags));
+
+	udvp = realvp(dvp);
+
+	if (!vfs_optionisset(dvp->v_vfsp, MNTOPT_LOFS_UNION, NULL))
+		return (VOP_RMDIR(udvp, nm, rvp, cr, ct, flags));
+
+	if ((error = lowervn(dvp, cr, &ldvp)) != 0)
+		ldvp = NULLVP;
+	
+	if (ldvp != NULLVP) {
+		error = VOP_LOOKUP(ldvp, nm, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL);
+		if (!error) {
+			xva_init(&xvattr);
+			xoap = xva_getxoptattr(&xvattr);
+			ASSERT(xoap);
+			XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
+			xoap->xoa_whiteout = 1;
+
+			error = VOP_SETATTR(vpp, &xvattr.xva_vattr, 0, cr, ct);
+			if (error)
+				goto out;
+		}
+	}
+
+	if (udvp != NULLVP)
+		error = VOP_RMDIR(udvp, nm, rvp, cr, ct, flags);
+
+out:
+	VN_RELE(ldvp);
+	return (error);
 }
 
 static int
@@ -1230,8 +1265,7 @@ lo_readdir(
 			uio.uio_loffset = -uiop->uio_loffset;
 
 			/* lower readir */
-			lflags = flags;
-			lflags |= V_RDDIR_NOWHITEOUT;
+			lflags = flags | V_RDDIR_NOWHITEOUT;
 			error = VOP_READDIR(lvp, &uio, cr, eofp, ct, lflags);
 			if (error) {
 				kmem_free(mem, len);
@@ -1294,6 +1328,7 @@ out:
 static int
 lo_rwlock(vnode_t *vp, int write_lock, caller_context_t *ct)
 {
+	/* TODO : lock lower half */
 	vp = realvp(vp);
 	return (VOP_RWLOCK(vp, write_lock, ct));
 }
@@ -1301,6 +1336,7 @@ lo_rwlock(vnode_t *vp, int write_lock, caller_context_t *ct)
 static void
 lo_rwunlock(vnode_t *vp, int write_lock, caller_context_t *ct)
 {
+	/* TODO : unlock lower half */
 	vp = realvp(vp);
 	VOP_RWUNLOCK(vp, write_lock, ct);
 }
