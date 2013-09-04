@@ -65,7 +65,7 @@
  */
 #define	LOFS_DEFAULT_HTSIZE	(1 << 6)
 
-#define	ltablehash(vp, tblsz)	((((intptr_t)(vp))>>10) & ((tblsz)-1))
+#define	ltablehash(uvp, lvp, tblsz)	(((((intptr_t)(uvp))>>10)|(((intptr_t)(lvp))>>10)) & ((tblsz)-1))
 
 /*
  * The following macros can only be safely used when the desired bucket
@@ -74,30 +74,30 @@
 /*
  * The lock in the hashtable associated with the given vnode.
  */
-#define	TABLE_LOCK(vp, li)      \
-	(&(li)->li_hashtable[ltablehash((vp), (li)->li_htsize)].lh_lock)
+#define	TABLE_LOCK(uvp, lvp, li)      \
+	(&(li)->li_hashtable[ltablehash((uvp), (lvp), (li)->li_htsize)].lh_lock)
 
 /*
  * The bucket in the hashtable that the given vnode hashes to.
  */
-#define	TABLE_BUCKET(vp, li)    \
-	((li)->li_hashtable[ltablehash((vp), (li)->li_htsize)].lh_chain)
+#define	TABLE_BUCKET(uvp, lvp, li)    \
+	((li)->li_hashtable[ltablehash((uvp), (lvp), (li)->li_htsize)].lh_chain)
 
 /*
  * Number of elements currently in the bucket that the vnode hashes to.
  */
-#define	TABLE_COUNT(vp, li)	\
-	((li)->li_hashtable[ltablehash((vp), (li)->li_htsize)].lh_count)
+#define	TABLE_COUNT(uvp, lvp, li)	\
+	((li)->li_hashtable[ltablehash((uvp), (lvp), (li)->li_htsize)].lh_count)
 
 /*
  * Grab/Drop the lock for the bucket this vnode hashes to.
  */
-#define	TABLE_LOCK_ENTER(vp, li)	table_lock_enter(vp, li)
-#define	TABLE_LOCK_EXIT(vp, li)		\
-	mutex_exit(&(li)->li_hashtable[ltablehash((vp),	\
+#define	TABLE_LOCK_ENTER(uvp, lvp, li)	table_lock_enter(uvp, lvp, li)
+#define	TABLE_LOCK_EXIT(uvp, lvp, li)		\
+	mutex_exit(&(li)->li_hashtable[ltablehash((uvp), (lvp),	\
 	    (li)->li_htsize)].lh_lock)
 
-static lnode_t *lfind(struct vnode *, struct loinfo *);
+static lnode_t *lfind(struct vnode *, struct vnode *, struct loinfo *);
 static void lsave(lnode_t *, struct loinfo *);
 static struct vfs *makelfsnode(struct vfs *, struct loinfo *);
 static struct lfsnode *lfsfind(struct vfs *, struct loinfo *);
@@ -151,7 +151,7 @@ static kmem_cache_t *lnode_cache;
  * hashtables, which is emptied when the filesystem is unmounted.
  */
 static void
-table_lock_enter(vnode_t *vp, struct loinfo *li)
+table_lock_enter(vnode_t *uvp, vnode_t *lvp, struct loinfo *li)
 {
 	struct lobucket *chain;
 	uint_t htsize;
@@ -161,7 +161,7 @@ table_lock_enter(vnode_t *vp, struct loinfo *li)
 		htsize = li->li_htsize;
 		membar_consumer();
 		chain = (struct lobucket *)li->li_hashtable;
-		hash = ltablehash(vp, htsize);
+		hash = ltablehash(uvp, lvp, htsize);
 		mutex_enter(&chain[hash].lh_lock);
 		if (li->li_hashtable == chain && li->li_htsize == htsize)
 			break;
@@ -251,16 +251,16 @@ ldestroy(struct loinfo *li)
  * NOTE: vp is assumed to be a held vnode.
  */
 struct vnode *
-makelonode(struct vnode *vp, struct loinfo *li, int flag)
+makelonode(struct vnode *uvp, struct vnode *lvp, struct loinfo *li, int flag)
 {
 	lnode_t *lp, *tlp;
 	struct vfs *vfsp;
 	vnode_t *nvp;
 
 	lp = NULL;
-	TABLE_LOCK_ENTER(vp, li);
+	TABLE_LOCK_ENTER(uvp, lvp, li);
 	if (flag != LOF_FORCE)
-		lp = lfind(vp, li);
+		lp = lfind(uvp, lvp, li);
 	if ((flag == LOF_FORCE) || (lp == NULL)) {
 		/*
 		 * Optimistically assume that we won't need to sleep.
@@ -268,7 +268,7 @@ makelonode(struct vnode *vp, struct loinfo *li, int flag)
 		lp = kmem_cache_alloc(lnode_cache, KM_NOSLEEP);
 		nvp = vn_alloc(KM_NOSLEEP);
 		if (lp == NULL || nvp == NULL) {
-			TABLE_LOCK_EXIT(vp, li);
+			TABLE_LOCK_EXIT(uvp, lvp, li);
 			/* The lnode allocation may have succeeded, save it */
 			tlp = lp;
 			if (tlp == NULL) {
@@ -278,34 +278,50 @@ makelonode(struct vnode *vp, struct loinfo *li, int flag)
 				nvp = vn_alloc(KM_SLEEP);
 			}
 			lp = NULL;
-			TABLE_LOCK_ENTER(vp, li);
+			TABLE_LOCK_ENTER(uvp, lvp, li);
 			if (flag != LOF_FORCE)
-				lp = lfind(vp, li);
+				lp = lfind(uvp, lvp, li);
 			if (lp != NULL) {
 				kmem_cache_free(lnode_cache, tlp);
 				vn_free(nvp);
-				VN_RELE(vp);
+				if (uvp != NULLVP)
+					VN_RELE(uvp);
+				if (lvp != NULLVP)
+					VN_RELE(lvp);
 				goto found_lnode;
 			}
 			lp = tlp;
 		}
 		atomic_add_32(&li->li_refct, 1);
-		vfsp = makelfsnode(vp->v_vfsp, li);
-		lp->lo_vnode = nvp;
-		VN_SET_VFS_TYPE_DEV(nvp, vfsp, vp->v_type, vp->v_rdev);
-		nvp->v_flag |= (vp->v_flag & (VNOMOUNT|VNOMAP|VDIROPEN));
+		if (uvp == NULLVP && lvp != NULLVP) {
+			vfsp = makelfsnode(lvp->v_vfsp, li);
+			VN_SET_VFS_TYPE_DEV(nvp, vfsp, lvp->v_type, lvp->v_rdev);
+			nvp->v_flag |= (lvp->v_flag & (VNOMOUNT|VNOMAP|VDIROPEN));
+		} else {
+			vfsp = makelfsnode(uvp->v_vfsp, li);
+			VN_SET_VFS_TYPE_DEV(nvp, vfsp, uvp->v_type, uvp->v_rdev);
+			nvp->v_flag |= (uvp->v_flag & (VNOMOUNT|VNOMAP|VDIROPEN));
+		}
 		vn_setops(nvp, lo_vnodeops);
 		nvp->v_data = (caddr_t)lp;
-		lp->lo_vp = vp;
+		lp->lo_vnode = nvp;
+		lp->lo_uvp = uvp;
+		lp->lo_lvp = lvp;
 		lp->lo_looping = 0;
 		lsave(lp, li);
-		vn_exists(vp);
+		if (uvp != NULLVP)
+			vn_exists(uvp);
+		if (lvp != NULLVP)
+			vn_exists(lvp);
 	} else {
-		VN_RELE(vp);
+		if (uvp != NULLVP)
+			VN_RELE(uvp);
+		if (lvp != NULLVP)
+			VN_RELE(lvp);
 	}
 
 found_lnode:
-	TABLE_LOCK_EXIT(vp, li);
+	TABLE_LOCK_EXIT(uvp, lvp, li);
 	return (ltov(lp));
 }
 
@@ -467,7 +483,7 @@ lo_realvfs(struct vfs *vfsp, struct vnode **realrootvpp)
 	ASSERT(li->li_refct > 0);
 	if (vfsp == li->li_mountvfs) {
 		if (realrootvpp != NULL)
-			*realrootvpp = vtol(li->li_rootvp)->lo_vp;
+			*realrootvpp = vtol(li->li_rootvp)->lo_uvp;
 		return (li->li_realvfs);
 	}
 	mutex_enter(&li->li_lfslock);
@@ -559,7 +575,7 @@ lgrow(struct loinfo *li, uint_t newsize)
 		lnode_t *tlp, *nlp;
 
 		for (tlp = oldtable[i].lh_chain; tlp != NULL; tlp = nlp) {
-			uint_t hash = ltablehash(tlp->lo_vp, newsize);
+			uint_t hash = ltablehash(tlp->lo_uvp, tlp->lo_lvp, newsize);
 
 			nlp = tlp->lo_next;
 			tlp->lo_next = newtable[hash].lh_chain;
@@ -602,22 +618,23 @@ lgrow(struct loinfo *li, uint_t newsize)
 static void
 lsave(lnode_t *lp, struct loinfo *li)
 {
-	ASSERT(lp->lo_vp);
-	ASSERT(MUTEX_HELD(TABLE_LOCK(lp->lo_vp, li)));
+	ASSERT(lp->lo_uvp);
+	ASSERT(lp->lo_lvp);
+	ASSERT(MUTEX_HELD(TABLE_LOCK(lp->lo_uvp, lp->lo_lvp, li)));
 
 #ifdef LODEBUG
 	lo_dprint(4, "lsave lp %p hash %d\n",
-	    lp, ltablehash(lp->lo_vp, li));
+	    lp, ltablehash(lp->lo_uvp, lp->lo_lvp, li));
 #endif
 
-	TABLE_COUNT(lp->lo_vp, li)++;
-	lp->lo_next = TABLE_BUCKET(lp->lo_vp, li);
-	TABLE_BUCKET(lp->lo_vp, li) = lp;
+	TABLE_COUNT(lp->lo_uvp, lp->lo_lvp, li)++;
+	lp->lo_next = TABLE_BUCKET(lp->lo_uvp, lp->lo_lvp, li);
+	TABLE_BUCKET(lp->lo_uvp, lp->lo_lvp, li) = lp;
 
 	if (li->li_refct > (li->li_htsize << lo_resize_threshold)) {
-		TABLE_LOCK_EXIT(lp->lo_vp, li);
+		TABLE_LOCK_EXIT(lp->lo_uvp, lp->lo_lvp, li);
 		lgrow(li, li->li_htsize << lo_resize_factor);
-		TABLE_LOCK_ENTER(lp->lo_vp, li);
+		TABLE_LOCK_ENTER(lp->lo_uvp, lp->lo_lvp, li);
 	}
 }
 
@@ -647,25 +664,26 @@ freelonode(lnode_t *lp)
 	struct lfsnode *lfs, *nextlfs;
 	struct vfs *vfsp;
 	struct vnode *vp = ltov(lp);
-	struct vnode *realvp = realvp(vp);
+	struct vnode *realuvp = realuvp(vp);
+	struct vnode *reallvp = reallvp(vp);
 	struct loinfo *li = vtoli(vp->v_vfsp);
 
 #ifdef LODEBUG
 	lo_dprint(4, "freelonode lp %p hash %d\n",
-	    lp, ltablehash(lp->lo_vp, li));
+	    lp, ltablehash(lp->lo_uvp, lp->lo_lvp, li));
 #endif
-	TABLE_LOCK_ENTER(lp->lo_vp, li);
+	TABLE_LOCK_ENTER(lp->lo_uvp, lp->lo_lvp, li);
 
 	mutex_enter(&vp->v_lock);
 	if (vp->v_count > 1) {
 		vp->v_count--;	/* release our hold from vn_rele */
 		mutex_exit(&vp->v_lock);
-		TABLE_LOCK_EXIT(lp->lo_vp, li);
+		TABLE_LOCK_EXIT(lp->lo_uvp, lp->lo_lvp, li);
 		return;
 	}
 	mutex_exit(&vp->v_lock);
 
-	for (lt = TABLE_BUCKET(lp->lo_vp, li); lt != NULL;
+	for (lt = TABLE_BUCKET(lp->lo_uvp, lp->lo_lvp, li); lt != NULL;
 	    ltprev = lt, lt = lt->lo_next) {
 		if (lt == lp) {
 #ifdef LODEBUG
@@ -698,15 +716,18 @@ freelonode(lnode_t *lp)
 				mutex_exit(&li->li_lfslock);
 			}
 			if (ltprev == NULL) {
-				TABLE_BUCKET(lt->lo_vp, li) = lt->lo_next;
+				TABLE_BUCKET(lt->lo_uvp, lt->lo_lvp, li) = lt->lo_next;
 			} else {
 				ltprev->lo_next = lt->lo_next;
 			}
-			TABLE_COUNT(lt->lo_vp, li)--;
-			TABLE_LOCK_EXIT(lt->lo_vp, li);
+			TABLE_COUNT(lt->lo_uvp, lt->lo_lvp, li)--;
+			TABLE_LOCK_EXIT(lt->lo_uvp, lt->lo_lvp, li);
 			kmem_cache_free(lnode_cache, lt);
 			vn_free(vp);
-			VN_RELE(realvp);
+			if (realuvp != NULLVP)
+				VN_RELE(realuvp);
+			if (reallvp != NULLVP)
+				VN_RELE(reallvp);
 			return;
 		}
 	}
@@ -718,15 +739,15 @@ freelonode(lnode_t *lp)
  * Lookup a lnode by vp
  */
 static lnode_t *
-lfind(struct vnode *vp, struct loinfo *li)
+lfind(struct vnode *uvp, struct vnode *lvp, struct loinfo *li)
 {
 	lnode_t *lt;
 
-	ASSERT(MUTEX_HELD(TABLE_LOCK(vp, li)));
+	ASSERT(MUTEX_HELD(TABLE_LOCK(uvp, lvp, li)));
 
-	lt = TABLE_BUCKET(vp, li);
+	lt = TABLE_BUCKET(uvp, lvp, li);
 	while (lt != NULL) {
-		if (lt->lo_vp == vp) {
+		if (lt->lo_uvp == uvp && lt->lo_lvp == lvp) {
 			VN_HOLD(ltov(lt));
 			return (lt);
 		}

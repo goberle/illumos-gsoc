@@ -194,8 +194,8 @@ lnode_format(uintptr_t addr, const void *data, void *private)
 {
 	const lnode_t *lop = data;
 
-	mdb_printf("%?p %?p %?p\n",
-	    addr, lop->lo_vnode, lop->lo_vp);
+	mdb_printf("%?p %?p %?p %?p\n",
+	    addr, lop->lo_vnode, lop->lo_uvp, lop->lo_lvp);
 
 	return (DCMD_OK);
 }

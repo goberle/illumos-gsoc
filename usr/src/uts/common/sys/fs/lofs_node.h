@@ -43,7 +43,8 @@ extern "C" {
  */
 typedef struct lnode {
 	struct lnode	*lo_next;	/* link for hash chain */
-	struct vnode	*lo_vp;		/* pointer to real vnode */
+	struct vnode	*lo_uvp;		/* pointer to real upper vnode */
+    struct vnode    *lo_lvp;    /* pointer to real lower vnode */
 	uint_t		lo_looping; 	/* looping flags (see below) */
 	struct vnode	*lo_vnode;	/* place holder vnode for file */
 } lnode_t;
@@ -64,11 +65,12 @@ typedef struct lnode {
  */
 #define	ltov(lp)	(((lp)->lo_vnode))
 #define	vtol(vp)	((struct lnode *)((vp)->v_data))
-#define	realvp(vp)	(vtol(vp)->lo_vp)
+#define	realuvp(vp)	(vtol(vp)->lo_uvp)
+#define reallvp(vp) (vtol(vp)->lo_lvp)
 #define lstatus(vp)	(vtol(vp)->status)
 
 #ifdef _KERNEL
-extern vnode_t *makelonode(vnode_t *, struct loinfo *, int);
+extern vnode_t *makelonode(vnode_t *, vnode_t *, struct loinfo *, int);
 extern void freelonode(lnode_t *);
 #endif /* _KERNEL */
 
