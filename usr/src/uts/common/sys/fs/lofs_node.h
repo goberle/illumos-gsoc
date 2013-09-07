@@ -67,10 +67,10 @@ typedef struct lnode {
 #define	vtol(vp)	((struct lnode *)((vp)->v_data))
 #define	realuvp(vp)	(vtol(vp)->lo_uvp)
 #define reallvp(vp) (vtol(vp)->lo_lvp)
-#define lstatus(vp)	(vtol(vp)->status)
 
 #ifdef _KERNEL
 extern vnode_t *makelonode(vnode_t *, vnode_t *, struct loinfo *, int);
+extern void updatelonode(struct vnode *, struct vnode *, struct loinfo *);
 extern void freelonode(lnode_t *);
 #endif /* _KERNEL */
 

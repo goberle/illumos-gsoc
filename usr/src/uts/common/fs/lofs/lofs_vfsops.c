@@ -410,7 +410,12 @@ lo_mount(struct vfs *vfsp,
 	/*
 	 * Make the root vnode
 	 */
-	srootvp = makelonode(realrootvp, vp, li, 0);
+	if (vfs_optionisset(vfsp, MNTOPT_LOFS_UNION, NULL)) {
+		VN_HOLD(vp);
+		srootvp = makelonode(realrootvp, vp, li, 0);
+	} else {
+		srootvp = makelonode(realrootvp, NULLVP, li, 0);
+	}
 	srootvp->v_flag |= VROOT;
 	li->li_rootvp = srootvp;
 

@@ -44,9 +44,6 @@
 #include <vm/as.h>
 #include <vm/seg.h>
 
-static int lowervn(vnode_t *, cred_t *, vnode_t **);
-static pathname_t *relpn(pathname_t *, vnode_t *);
-void pn_striplast(pathname_t *);
 static int mkwhiteout(vnode_t *, char *, struct cred *, caller_context_t *);
 static int upper_copyfile_core(vnode_t *, vnode_t *, struct cred *, caller_context_t *);
 static int upper_copyfile(vnode_t *, struct cred *, caller_context_t *);
@@ -210,17 +207,23 @@ lo_ioctl(
 static int
 lo_setfl(vnode_t *vp, int oflags, int nflags, cred_t *cr, caller_context_t *ct)
 {
-	vnode_t *uvp, *lvp, *tvp;
+	int error;
+	vnode_t *uvp, *lvp;
 
+	error = EROFS;
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
-	tvp = (uvp != NULLVP ? uvp : lvp);
+	if (uvp == NULLVP && lvp->v_type == VREG) {
+		if (error = upper_copyfile(vp, cr, ct))
+			return (error);
+		uvp = realuvp(vp);
+	}
 
-	if (tvp == NULLVP)
-		return (EBADF);
+	if (uvp != NULLVP)
+		error = VOP_SETFL(uvp, oflags, nflags, cr, ct);
 
-	return (VOP_SETFL(tvp, oflags, nflags, cr, ct));
+	return (error);
 }
 
 static int
@@ -586,13 +589,14 @@ lo_lookup(
 				*vpp = NULL;
 				return (error);
 			}
-	
-			pn_striplast(&pn_dotdot);
 
-			if ((error = lookuppn(&pn_dotdot, NULL, 1, NULL, vpp)) != 0) {
+			if ((error = lookuppnat(&pn_dotdot, NULL, 1, vpp, NULL, (vtoli(dvp->v_vfsp))->li_rootvp)) != 0) {
 				*vpp = NULL;
+				pn_free(&pn_dotdot);
 				return (error);
 			}
+
+			pn_free(&pn_dotdot);
 
 			if ((uvp == NULLVP) && (realuvp(*vpp) != NULLVP))
 				VN_HOLD(realuvp(*vpp));
@@ -939,7 +943,7 @@ lo_remove(
 	ldvp = reallvp(dvp);
 	
 	if (ldvp != NULLVP) {
-		error = mkwhiteout(ldvp, nm, cr, ct);
+		error = mkwhiteout(dvp, nm, cr, ct);
 		if (error && error != ENOENT)
 			goto out;
 	}
@@ -1018,7 +1022,7 @@ lo_rename(
 	int flags)
 {
 	int error;
-	vnode_t *tnvp, *lodvp, *vpp;
+	vnode_t *tnvp, *uvp, *lvp, *vpp;
 
 #ifdef LODEBUG
 	lo_dprint(4, "lo_rename vp %p realvp %p\n", odvp, realuvp(odvp));
@@ -1080,12 +1084,29 @@ rename:
 	 */
 
 	if (vfs_optionisset(odvp->v_vfsp, MNTOPT_LOFS_UNION, NULL)) {
-		if(!VOP_LOOKUP(odvp, onm, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL))
+		error = VOP_LOOKUP(odvp, onm, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL);
+		if(!error) {
+			uvp = realuvp(vpp);
+			lvp = reallvp(vpp);
+
+			if (uvp == NULLVP && lvp->v_type == VREG) {
+				if ((error = upper_copyfile(vpp, cr, ct)) != 0) {
+					VN_RELE(vpp);
+					return (error);
+				}
+			}
 			VN_RELE(vpp);
+
+			error = mkwhiteout(odvp, onm, cr, ct);
+			if (error && error != ENOENT)
+				return (error);
+		}	
 	}
 
 	if (vn_matchops(ndvp, lo_vnodeops)) {
 		ndvp = realuvp(ndvp);	/* Check the next layer */
+		if (ndvp == NULLVP)
+			return (EROFS);
 	} else {
 		/*
 		 * We can go fast here
@@ -1097,26 +1118,9 @@ rename:
 			return (EXDEV);
 	}
 
-	if (vfs_optionisset(odvp->v_vfsp, MNTOPT_LOFS_UNION, NULL)) {
-		if ((error = lowervn(odvp, cr, &lodvp)) != 0)
-			lodvp = NULLVP;
-	
-		if (lodvp != NULLVP) {
-			/*
-			error = upper_copyfile(odvp, onm, cr, ct);
-			if(error && error != EEXIST)
-				goto out;
-			*/
-			if(error = mkwhiteout(lodvp, onm, cr, ct))
-				goto out;
-		}
-	}
-
 	error = VOP_RENAME(odvp, onm, ndvp, nnm, cr, ct, flags);
 
 out:
-	if (vfs_optionisset(odvp->v_vfsp, MNTOPT_LOFS_UNION, NULL))
-		VN_RELE(lodvp);
 	return (error);
 }
 
@@ -1192,7 +1196,7 @@ lo_rmdir(
 	ldvp = reallvp(dvp);
 	
 	if (ldvp != NULLVP) {
-		error = mkwhiteout(ldvp, nm, cr, ct);
+		error = mkwhiteout(dvp, nm, cr, ct);
 		if (error && error != ENOENT)
 			goto out;
 	}
@@ -1667,168 +1671,44 @@ lo_shrlock(
 }
 
 /*
- * Calculate lower vnode 
+ * Whiteout the lower vnode of an lo vnode.
  */
-
-void
-pn_striplast(pathname_t *pnp)
-{
-	char *buf = pnp->pn_buf;
-	char *path = pnp->pn_path + pnp->pn_pathlen - 1;
-
-	if (*buf == '\0')
-		return;
-
-	while (path > buf && *path != '/')
-		--path;
-	*path = '\0';
-
-	pnp->pn_pathlen = path - pnp->pn_path;
-}
-
-static pathname_t *
-relpn(pathname_t *pn, vnode_t *relvp)
-{
-	pathname_t vpn;
-	pathname_t *ret = NULL;
-	char pncomp[MAXNAMELEN];
-	char vncomp[MAXNAMELEN];
-
-	if (pn_get(relvp->v_path, UIO_SYSSPACE, &vpn) != 0)
-		return NULL;
-
-	/*
-	 * If the paths match, the relative path from one to the other
-	 * is explicitly ".".
-	 *
-	 * XXX: This feels wrong
-	 */
-	if (strcmp(pn->pn_path, relvp->v_path) == 0) {
-		ret = kmem_zalloc(sizeof (pathname_t), KM_SLEEP);
-		pn_alloc(ret);
-		pn_set(ret, ".");
-		return ret;
-	}
-
-	/* If the vnode path is longest, pn can't be a child */
-	if (strlen(pn->pn_path) < strlen(relvp->v_path))
-		return NULL;
-	
-	while (pn_pathleft(&vpn) && pn_pathleft(pn)) {
-		pn_skipslash(&vpn);
-		pn_skipslash(pn);
-
-		/* These only return non-0 on actual error */
-		if ((pn_getcomponent(pn, pncomp) != 0) ||
-		    (pn_getcomponent(&vpn, vncomp) != 0))
-			return NULL;
-
-		if (strcmp(pncomp, vncomp) != 0)
-			return NULL;
-	}
-
-	if (pn_pathleft(pn)) {
-		pn_skipslash(pn);
-		ret = kmem_zalloc(sizeof (pathname_t), KM_SLEEP);
-		pn_get(pn->pn_path, UIO_SYSSPACE, ret);
-	}
-
-	return ret;
-}
-
-static int
-lowervn(vnode_t *vp, cred_t *cr, vnode_t **lvp)
-{
-	pathname_t *rpn;
-	pathname_t vpn;
-	int err = 0;
-
-	pn_get(vp->v_path, UIO_SYSSPACE, &vpn);
-
-	if ((rpn = relpn(&vpn, vp->v_vfsp->vfs_vnodecovered)) == NULL)
-		return -1;
-
-	/*
-	 * If we're asked for the mountpoint, we can return the underlying
-	 * vnode directly.
-	 */
-	if (strcmp(vp->v_path, vp->v_vfsp->vfs_vnodecovered->v_path) == 0) {
-		*lvp = vp->v_vfsp->vfs_vnodecovered;
-		VN_HOLD(vp->v_vfsp->vfs_vnodecovered);
-	} else {
-		char comp[MAXNAMELEN];
-		vnode_t *pvp;
-
-		/*
-		 * lookup* traverse mountpoints unconditionally, lookup the
-		 * first level component by hand to avoid the traversal into
-		 * the upper layer, and then lookup as normal.
-		 */
-		 pn_getcomponent(rpn, comp);
-		 err = VOP_LOOKUP(vp->v_vfsp->vfs_vnodecovered,
-		     comp, &pvp, NULL, 0, NULL, cr, NULL, NULL, NULL);
-
-		 if (err != 0)
-			 goto out;
-
-		 /*
-		  * If the request was only be one level below the mountpoint,
-		  * we're done
-		  */
-		 if (!pn_pathleft(rpn)) {
-			 /* pvp was already held by the VOP_LOOKUP */
-			 *lvp = pvp;
-		 } else {
-			/* XXX: Really lookup links? */
-			 pn_skipslash(rpn);
-			 err = lookuppnat(rpn, NULL, 1,
-			     NULL, lvp, pvp);
-			 /* lvp is already held by the lookuppnat */
-			 VN_RELE(pvp);
-		 }
-	}
-out:
-	pn_free(rpn);
-	kmem_free(rpn, sizeof (pathname_t));
-	pn_free(&vpn);
-	return err;
-}
-
-/*
- * Whitout a vnode on the lower
- */
-
 static int
 mkwhiteout(vnode_t *dvp, char *nm, struct cred *cr, caller_context_t *ct)
 {
-	int error = 0;
-	vnode_t *vpp;
+	int error;
+	vnode_t *lvp, *vpp;
 	xvattr_t xvattr;
 	xoptattr_t *xoap;
 
-	if (!VOP_LOOKUP(dvp, nm, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL)) {
-		xva_init(&xvattr);
-		xoap = xva_getxoptattr(&xvattr);
-		ASSERT(xoap);
-		XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
-		xoap->xoa_whiteout = 1;
+	error = ENOENT;
+	lvp = reallvp(dvp);
 
-		error = VOP_SETATTR(vpp, &xvattr.xva_vattr, 0, cr, ct);
-		VN_RELE(vpp);
-		if (error)
-			goto out;
+	if (lvp != NULLVP) {
+		error = VOP_LOOKUP(lvp, nm, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL);
+		if (!error) {
+			error = VOP_ACCESS(vpp, VWRITE, 0, cr, ct);
+			if (!error) {
+				xva_init(&xvattr);
+				xoap = xva_getxoptattr(&xvattr);
+				ASSERT(xoap);
+				XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
+				xoap->xoa_whiteout = 1;
 
-		/* TODO: freelonode */
+				error = VOP_SETATTR(vpp, &xvattr.xva_vattr, 0, cr, ct);
+				VN_RELE(vpp);
+				return (error);
+			}
+			VN_RELE(vpp);
+		}
 	}
 
-out:
 	return (error);
 }
 
 /*
- * Copy a vnode on the upper
+ * Copy the lower vnode of an lo vnode on the upper
  */
-
 static int
 upper_copyfile_core(vnode_t *uvp, vnode_t *lvp, struct cred *cr, caller_context_t *ct)
 {
@@ -1890,44 +1770,51 @@ static int
 upper_copyfile(vnode_t *vp, struct cred *cr, caller_context_t *ct)
 {
 	int error;
-	vnode_t *uvp, *lvp, **dvp = NULL;
-	pathname_t pn_dvp, pn_lvp;
+	vnode_t *dvp, *uvp, *lvp;
+	pathname_t pn_vp;
 	vattr_t va;
 
 	lvp = reallvp(vp);
 
+	/* Check access lower vnode */
+	if ((error = VOP_ACCESS(lvp, VREAD, 0, cr, ct)) != 0)
+		return (error);
+
 	/* Get the dvp vnode */
-	if ((error = pn_get(lvp->v_path, UIO_SYSSPACE, &pn_lvp)) != 0)
+	if ((error = pn_get(vp->v_path, UIO_SYSSPACE, &pn_vp)) != 0)
 		return (error);
 
-	if ((error = pn_get(lvp->v_path, UIO_SYSSPACE, &pn_dvp)) != 0)
+	if ((error = lookuppn(&pn_vp, NULL, 1, &dvp, NULL) != 0)) {
+		pn_free(&pn_vp);
 		return (error);
-
-	pn_striplast(&pn_dvp);
-
-	if (error = lookuppn(&pn_dvp, NULL, 1, NULL, dvp))
-		return (error);
+	}
 
 	/* Get attributes from lower vnode */
 	va.va_mask = AT_ALL;
-	if (error = VOP_GETATTR(lvp, &va, 0, cr, ct))
+	if ((error = VOP_GETATTR(lvp, &va, 0, cr, ct)) != 0)
 		goto out;
 
 	/* Create the upper vnode */
-	if (error = VOP_CREATE(realuvp(*dvp), pn_lvp.pn_path, &va, EXCL, 0, &uvp, cr, 0, ct, NULL))
+	if ((error = VOP_CREATE(realuvp(dvp), pn_vp.pn_path, &va, EXCL, 0, &uvp, cr, 0, ct, NULL)) !=0 )
 		goto out;
-	realuvp(vp) = uvp;
+
+	/* Update the lo node */
+	updatelonode(vp, uvp, vtoli(vp->v_vfsp));
 
 	/* Open the lower vnode in read only mode */
-	if (error = VOP_OPEN(&lvp, FREAD, cr, ct))
-		goto out;
+	if ((error = VOP_OPEN(&lvp, FREAD, cr, ct)) != 0)
+		goto close_uvp;
 
 	/* Process the copyfile */
 	error = upper_copyfile_core(uvp, lvp, cr, ct);
 
+	VOP_CLOSE(lvp, 0, 0, 0, cr, ct);
+close_uvp:
 	VOP_CLOSE(uvp, 0, 0, 0, cr, ct);
 out:
-	VOP_CLOSE(lvp, 0, 0, 0, cr, ct);
+	VN_RELE(dvp);
+	pn_free(&pn_vp);
+
 	return (error);
 }
 

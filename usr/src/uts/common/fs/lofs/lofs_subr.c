@@ -325,6 +325,36 @@ found_lnode:
 	return (ltov(lp));
 }
 
+/* 
+ * Add uvp vnode in an lnode and refresh the hash for the cache.
+ */
+void
+updatelonode(struct vnode *vp, struct vnode *uvp, struct loinfo *li) {
+	lnode_t *lp, *lt, *ltprev = NULL;
+
+	lp = vtol(vp);
+
+	TABLE_LOCK_ENTER(lp->lo_uvp, lp->lo_lvp, li);
+
+	for (lt = TABLE_BUCKET(lp->lo_uvp, lp->lo_lvp, li); lt != NULL;
+	    ltprev = lt, lt = lt->lo_next) {
+		if (lt == lp) {
+			if (ltprev == NULL) {
+				TABLE_BUCKET(lt->lo_uvp, lt->lo_lvp, li) = lt->lo_next;
+			} else {
+				ltprev->lo_next = lt->lo_next;
+			}
+			TABLE_COUNT(lt->lo_uvp, lt->lo_lvp, li)--;
+			TABLE_LOCK_EXIT(lt->lo_uvp, lt->lo_lvp, li);
+			lp->lo_uvp = uvp;
+			lsave(lp, li);
+			return;
+		}
+	}
+	panic("updatelonode");
+	/*NOTREACHED*/
+}
+
 /*
  * Get/Make vfs structure for given real vfs
  */
@@ -618,8 +648,7 @@ lgrow(struct loinfo *li, uint_t newsize)
 static void
 lsave(lnode_t *lp, struct loinfo *li)
 {
-	ASSERT(lp->lo_uvp);
-	ASSERT(lp->lo_lvp);
+	ASSERT(lp->lo_uvp && lp->lo_lvp);
 	ASSERT(MUTEX_HELD(TABLE_LOCK(lp->lo_uvp, lp->lo_lvp, li)));
 
 #ifdef LODEBUG
