@@ -134,7 +134,6 @@ lo_close(
 #ifdef LODEBUG
 	lo_dprint(4, "lo_close vp %p realvp %p\n", vp, realuvp(vp));
 #endif
-
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
@@ -152,7 +151,6 @@ lo_read(vnode_t *vp, struct uio *uiop, int ioflag, struct cred *cr,
 #ifdef LODEBUG
 	lo_dprint(4, "lo_read vp %p realvp %p\n", vp, realuvp(vp));
 #endif
-
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
@@ -166,10 +164,10 @@ lo_write(vnode_t *vp, struct uio *uiop, int ioflag, struct cred *cr,
 	caller_context_t *ct)
 {
 	vnode_t *uvp, *lvp, *tvp;
+
 #ifdef LODEBUG
 	lo_dprint(4, "lo_write vp %p realvp %p\n", vp, realuvp(vp));
 #endif
-
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
@@ -189,10 +187,10 @@ lo_ioctl(
 	caller_context_t *ct)
 {
 	vnode_t *uvp, *lvp, *tvp;
+
 #ifdef LODEBUG
 	lo_dprint(4, "lo_ioctl vp %p realvp %p\n", vp, realuvp(vp));
 #endif
-
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
@@ -239,7 +237,6 @@ lo_getattr(
 #ifdef LODEBUG
 	lo_dprint(4, "lo_getattr vp %p realvp %p\n", vp, realuvp(vp));
 #endif
-
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
@@ -286,7 +283,8 @@ lo_access(
 	struct cred *cr,
 	caller_context_t *ct)
 {
-	vnode_t *uvp, *lvp;
+	vnode_t *uvp, *lvp, *tvp;
+
 #ifdef LODEBUG
 	lo_dprint(4, "lo_access vp %p realvp %p\n", vp, realuvp(vp));
 #endif
@@ -294,23 +292,23 @@ lo_access(
 		if (vp->v_type == VREG && vn_is_readonly(vp))
 			return (EROFS);
 	}
+
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
-	if (uvp != NULLVP)
-		return (VOP_ACCESS(uvp, mode, flags, cr, ct));
-
-	return (VOP_ACCESS(lvp, mode, flags, cr, ct));
+	tvp = (uvp != NULLVP ? uvp : lvp);
+		
+	return (VOP_ACCESS(tvp, mode, flags, cr, ct));
 }
 
 static int
 lo_fsync(vnode_t *vp, int syncflag, struct cred *cr, caller_context_t *ct)
 {
 	vnode_t *uvp, *lvp, *tvp;
+
 #ifdef LODEBUG
 	lo_dprint(4, "lo_fsync vp %p realvp %p\n", vp, realuvp(vp));
 #endif
-	
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
@@ -337,10 +335,10 @@ static int
 lo_fid(vnode_t *vp, struct fid *fidp, caller_context_t *ct)
 {
 	vnode_t *uvp, *lvp, *tvp;
+
 #ifdef LODEBUG
 	lo_dprint(4, "lo_fid %p, realvp %p\n", vp, realuvp(vp));
 #endif
-	
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
@@ -1113,6 +1111,8 @@ rename:
 		 */
 		while (vn_matchops(odvp, lo_vnodeops)) {
 			odvp = realuvp(odvp);
+			if (odvp == NULLVP)
+				return (EROFS);
 		}
 		if (odvp->v_vfsp != ndvp->v_vfsp)
 			return (EXDEV);
@@ -1784,7 +1784,7 @@ upper_copyfile(vnode_t *vp, struct cred *cr, caller_context_t *ct)
 	if ((error = pn_get(vp->v_path, UIO_SYSSPACE, &pn_vp)) != 0)
 		return (error);
 
-	if ((error = lookuppn(&pn_vp, NULL, 1, &dvp, NULL) != 0)) {
+	if ((error = lookuppnat(&pn_vp, NULL, 1, &dvp, NULL, (vtoli(vp->v_vfsp))->li_rootvp)) != 0) {
 		pn_free(&pn_vp);
 		return (error);
 	}
