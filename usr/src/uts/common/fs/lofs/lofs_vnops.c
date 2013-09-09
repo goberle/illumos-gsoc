@@ -45,6 +45,7 @@
 #include <vm/seg.h>
 
 static int mkwhiteout(vnode_t *, char *, struct cred *, caller_context_t *);
+static int mkshadowdir(vnode_t *, char *, vnode_t *, vnode_t *, struct cred *, caller_context_t *);
 static int upper_copyfile_core(vnode_t *, vnode_t *, struct cred *, caller_context_t *);
 static int upper_copyfile(vnode_t *, struct cred *, caller_context_t *);
 
@@ -416,7 +417,7 @@ lo_lookup(
 	int doingdotdot = 0;
 	int nosub = 0;
 	int mkflag = 0;
-	int mkshadowdir = 0;
+	int mkshaddir = 0;
 
 	/*
 	 * If name is empty and no XATTR flags are set, then return
@@ -465,7 +466,7 @@ lo_lookup(
 
 	if (uvp == NULLVP && lvp != NULLVP) {
 		if(lvp->v_type == VDIR)
-			mkshadowdir++;
+			mkshaddir++;
 	}
 
 	/*
@@ -678,18 +679,14 @@ lo_lookup(
 	/*
 	 * XXX: Make Shadow Dir
 	 */
-	if (mkshadowdir) {
-		vattr_t va;
-
-		va.va_mask = AT_ALL;
-		if (error = VOP_GETATTR(lvp, &va, 0, cr, NULL))
-			goto out;
-
-   		if (error = VOP_MKDIR(udvp, nm, &va, vpp, cr, NULL, 0, NULL))
-   			goto out;
-	    
-	    *vpp = makelonode(*vpp, lvp, li, 0);
-	    return (error);
+	if (mkshaddir) {
+		error = mkshadowdir(dvp, nm, uvp, lvp, cr, ct);
+		if (!error) {
+			*vpp = makelonode(uvp, lvp, li, 0);
+		} else {
+			*vpp = makelonode(NULLVP, lvp, li, 0);
+		}
+	    return (0);
 	}
 
 	/*
@@ -961,7 +958,8 @@ lo_link(
 	caller_context_t *ct,
 	int flags)
 {
-	vnode_t *realvp;
+	int error;
+	vnode_t *realvp, *uvp, *lvp;
 
 #ifdef LODEBUG
 	lo_dprint(4, "lo_link vp %p realvp %p\n", vp, realuvp(vp));
@@ -987,8 +985,21 @@ lo_link(
 	if (vn_is_readonly(vp)) {
 		return (EROFS);
 	}
+
+	uvp = realuvp(vp);
+	lvp = reallvp(vp);
+	if (uvp == NULLVP) {
+		if (lvp->v_type != VREG)
+			return (EOPNOTSUPP);
+
+		if ((error = upper_copyfile(vp, cr, ct)) != 0)
+			return (error);
+	}
+
 	while (vn_matchops(vp, lo_vnodeops)) {
-		vp = realuvp(vp);
+		uvp = realuvp(vp);
+		if (uvp == NULLVP)
+			return (EROFS);
 	}
 
 	/*
@@ -1002,7 +1013,9 @@ lo_link(
 		vp = realvp;
 
 	while (vn_matchops(tdvp, lo_vnodeops)) {
-		tdvp = realuvp(tdvp);
+		uvp = realuvp(tdvp);
+		if (uvp == NULLVP)
+			return (EROFS);
 	}
 	if (vp->v_vfsp != tdvp->v_vfsp)
 		return (EXDEV);
@@ -1045,7 +1058,7 @@ lo_rename(
 	 * in the same filesystem, it is just that we do not check to see
 	 * if the filesystem we are coming from in this case is read only.
 	 */
-	if (odvp->v_vfsp->vfs_flag & VFS_RDONLY)
+	if (vn_is_readonly(odvp))
 		return (EROFS);
 	/*
 	 * We need to make sure we're not trying to remove a mount point for a
@@ -1087,10 +1100,24 @@ rename:
 			uvp = realuvp(vpp);
 			lvp = reallvp(vpp);
 
-			if (uvp == NULLVP && lvp->v_type == VREG) {
-				if ((error = upper_copyfile(vpp, cr, ct)) != 0) {
-					VN_RELE(vpp);
-					return (error);
+			if (uvp == NULLVP) {
+				switch (lvp->v_type) {
+					case VREG:
+						if ((error = upper_copyfile(vpp, cr, ct)) != 0) {
+							VN_RELE(vpp);
+							return (error);
+						}
+						break;
+					case VDIR:
+						if ((error = mkshadowdir(odvp, onm, uvp, lvp, cr, ct)) != 0) {
+							VN_RELE(vpp);
+							return (error);
+						}
+						updatelonode(vpp, uvp, vtoli(vpp->v_vfsp));
+						break;
+					default:
+						VN_RELE(vpp);
+						return (ENODEV);
 				}
 			}
 			VN_RELE(vpp);
@@ -1098,7 +1125,9 @@ rename:
 			error = mkwhiteout(odvp, onm, cr, ct);
 			if (error && error != ENOENT)
 				return (error);
-		}	
+		} else { 
+			return (error);
+		}
 	}
 
 	if (vn_matchops(ndvp, lo_vnodeops)) {
@@ -1156,16 +1185,15 @@ lo_mkdir(
 static int
 lo_realvp(vnode_t *vp, vnode_t **vpp, caller_context_t *ct)
 {
+	vnode_t *uvp, *lvp;
 #ifdef LODEBUG
 	lo_dprint(4, "lo_realvp %p\n", vp);
 #endif
 
-	if (realuvp(vp) != NULLVP) {
-		while (vn_matchops(vp, lo_vnodeops))
-			vp = realuvp(vp);
-	} else {
-		while (vn_matchops(vp, lo_vnodeops))
-			vp = reallvp(vp);
+	while (vn_matchops(vp, lo_vnodeops)) {
+		uvp = realuvp(vp);
+		lvp = reallvp(vp);
+		vp = (uvp != NULLVP ? uvp : lvp);
 	}
 
 	if (VOP_REALVP(vp, vpp, ct) != 0)
@@ -1421,10 +1449,20 @@ lo_seek(vnode_t *vp, offset_t ooff, offset_t *noffp, caller_context_t *ct)
 static int
 lo_cmp(vnode_t *vp1, vnode_t *vp2, caller_context_t *ct)
 {
-	while (vn_matchops(vp1, lo_vnodeops))
-		vp1 = realuvp(vp1);
-	while (vn_matchops(vp2, lo_vnodeops))
-		vp2 = realuvp(vp2);
+	vnode_t *uvp, *lvp;
+
+	while (vn_matchops(vp1, lo_vnodeops)) {
+		uvp = realuvp(vp1);
+		lvp = reallvp(vp1);
+		vp1 = (uvp != NULLVP ? uvp : lvp);
+	}
+		
+	while (vn_matchops(vp2, lo_vnodeops)) {
+		uvp = realuvp(vp2);
+		lvp = reallvp(vp2);
+		vp2 = (uvp != NULLVP ? uvp : lvp);
+	}
+		
 	return (VOP_CMP(vp1, vp2, ct));
 }
 
@@ -1559,8 +1597,14 @@ static int
 lo_dump(vnode_t *vp, caddr_t addr, offset_t bn, offset_t count,
     caller_context_t *ct)
 {
-	vp = realuvp(vp);
-	return (VOP_DUMP(vp, addr, bn, count, ct));
+	vnode_t *tvp, *uvp, *lvp;
+
+	uvp = realuvp(vp);
+	lvp = reallvp(vp);
+
+	tvp = (uvp != NULLVP ? uvp : lvp);
+
+	return (VOP_DUMP(tvp, addr, bn, count, ct));
 }
 
 static int
@@ -1696,14 +1740,42 @@ mkwhiteout(vnode_t *dvp, char *nm, struct cred *cr, caller_context_t *ct)
 				xoap->xoa_whiteout = 1;
 
 				error = VOP_SETATTR(vpp, &xvattr.xva_vattr, 0, cr, ct);
-				VN_RELE(vpp);
-				return (error);
 			}
 			VN_RELE(vpp);
 		}
 	}
 
 	return (error);
+}
+
+/*
+ * mkshadowdir
+ */
+static int
+mkshadowdir(vnode_t *dvp, char *nm, vnode_t *uvp, vnode_t *lvp, struct cred *cr, caller_context_t *ct) {
+	int error;
+	vnode_t *udvp;
+	vattr_t va;
+
+	if (vn_is_readonly(dvp))
+		return (EROFS);
+
+	error = EROFS;
+	udvp = realuvp(dvp);
+
+	if (udvp != NULLVP) {
+		if ((error = VOP_ACCESS(udvp, VWRITE, 0, cr, ct)) != 0)
+			return (error);
+
+		va.va_mask = AT_ALL;
+		if ((error = VOP_GETATTR(lvp, &va, 0, cr, NULL)) != 0)
+			return (error);
+
+		if ((error = VOP_MKDIR(udvp, nm, &va, &uvp, cr, NULL, 0, NULL)) != 0)
+			return (error);
+	}
+
+    return (error);
 }
 
 /*
