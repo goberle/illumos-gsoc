@@ -293,14 +293,14 @@ makelonode(struct vnode *uvp, struct vnode *lvp, struct loinfo *li, int flag)
 			lp = tlp;
 		}
 		atomic_add_32(&li->li_refct, 1);
-		if (uvp == NULLVP && lvp != NULLVP) {
-			vfsp = makelfsnode(lvp->v_vfsp, li);
-			VN_SET_VFS_TYPE_DEV(nvp, vfsp, lvp->v_type, lvp->v_rdev);
-			nvp->v_flag |= (lvp->v_flag & (VNOMOUNT|VNOMAP|VDIROPEN));
-		} else {
+		if (uvp != NULLVP) {
 			vfsp = makelfsnode(uvp->v_vfsp, li);
 			VN_SET_VFS_TYPE_DEV(nvp, vfsp, uvp->v_type, uvp->v_rdev);
 			nvp->v_flag |= (uvp->v_flag & (VNOMOUNT|VNOMAP|VDIROPEN));
+		} else {
+			vfsp = makelfsnode(lvp->v_vfsp, li);
+			VN_SET_VFS_TYPE_DEV(nvp, vfsp, lvp->v_type, lvp->v_rdev);
+			nvp->v_flag |= (lvp->v_flag & (VNOMOUNT|VNOMAP|VDIROPEN));
 		}
 		vn_setops(nvp, lo_vnodeops);
 		nvp->v_data = (caddr_t)lp;
