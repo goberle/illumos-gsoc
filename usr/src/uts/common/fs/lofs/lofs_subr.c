@@ -106,6 +106,7 @@ uint_t lo_resize_threshold = 1;
 uint_t lo_resize_factor = 2;
 
 static kmem_cache_t *lnode_cache;
+static kmem_cache_t *lnode_status_cache;
 
 /*
  * Since the hashtable itself isn't protected by a lock, obtaining a
@@ -177,12 +178,15 @@ lofs_subrinit(void)
 	 */
 	lnode_cache = kmem_cache_create("lnode_cache", sizeof (lnode_t),
 	    0, NULL, NULL, NULL, NULL, NULL, 0);
+	lnode_status_cache = kmem_cache_create("lnode_status_cache", sizeof (lnode_status_t),
+	    0, NULL, NULL, NULL, NULL, NULL, 0);
 }
 
 void
 lofs_subrfini(void)
 {
 	kmem_cache_destroy(lnode_cache);
+	kmem_cache_destroy(lnode_status_cache);
 }
 
 /*
@@ -308,6 +312,7 @@ makelonode(struct vnode *uvp, struct vnode *lvp, struct loinfo *li, int flag)
 		lp->lo_uvp = uvp;
 		lp->lo_lvp = lvp;
 		lp->lo_looping = 0;
+		lp->lo_status = NULL;
 		lsave(lp, li);
 		if (uvp != NULLVP)
 			vn_exists(uvp);
@@ -696,6 +701,8 @@ freelonode(lnode_t *lp)
 	struct vnode *realuvp = realuvp(vp);
 	struct vnode *reallvp = reallvp(vp);
 	struct loinfo *li = vtoli(vp->v_vfsp);
+	struct lnode_status *lsp;
+	struct lnode_status *lspprev = NULL;
 
 #ifdef LODEBUG
 	lo_dprint(4, "freelonode lp %p hash %d\n",
@@ -744,6 +751,12 @@ freelonode(lnode_t *lp)
 				}
 				mutex_exit(&li->li_lfslock);
 			}
+			lsp = lt->lo_status;
+			while(lsp != NULL) {
+				lspprev = lsp;
+				lsp = lsp->los_next;
+				kmem_cache_free(lnode_status_cache, lspprev);
+			}
 			if (ltprev == NULL) {
 				TABLE_BUCKET(lt->lo_uvp, lt->lo_lvp, li) = lt->lo_next;
 			} else {
@@ -783,6 +796,286 @@ lfind(struct vnode *uvp, struct vnode *lvp, struct loinfo *li)
 		lt = lt->lo_next;
 	}
 	return (NULL);
+}
+
+/*
+ * Get/Make the lnode status.
+ */
+void
+getlonodestatus(struct vnode *vp, struct lnode_status **lspp, struct loinfo *li)
+{
+	lnode_t *lp;
+	lnode_status_t *lsp, *tlsp;
+	vnode_t *uvp, *lvp;
+	pid_t pid;
+
+	uvp = realuvp(vp);
+	lvp = reallvp(vp);
+	pid = curproc->p_pidp->pid_id;
+
+	TABLE_LOCK_ENTER(uvp, lvp, li);
+	lp = lfind(uvp, lvp, li);
+
+	lsp = tlsp = lp->lo_status;
+	while (lsp != NULL) {
+		if (lsp->los_pid == pid) {
+			*lspp = lsp;
+			TABLE_LOCK_EXIT(uvp, lvp, li);
+			return;
+		}
+		lsp = lsp->los_next;
+	}
+
+	lsp = kmem_cache_alloc(lnode_status_cache, KM_SLEEP);
+	lsp->los_pid = pid;
+	lsp->los_next = tlsp;
+	lsp->los_upper_opencnt = 0;
+	lsp->los_lower_opencnt = 0;
+	lsp->los_upper_mapcnt = 0;
+	lsp->los_lower_mapcnt = 0;
+	*lspp = lsp;
+
+	lp->lo_status = lsp;
+	TABLE_LOCK_EXIT(uvp, lvp, li);
+}
+
+/*
+ * Free the lnode status if you can.
+ */
+void
+tryfreelonodestatus(struct lnode *lp, struct lnode_status *lsptofree)
+{
+	struct vnode *vp = ltov(lp);
+	struct loinfo *li = vtoli(vp->v_vfsp);
+	lnode_status_t *lsp, *lspprev = NULL;
+
+	ASSERT(lsptofree != NULL);
+	
+	if (0 < lsptofree->los_upper_opencnt || 0 < lsptofree->los_lower_opencnt ||
+		0 < lsptofree->los_upper_mapcnt || 0 < lsptofree->los_lower_mapcnt)
+		return;
+
+	TABLE_LOCK_ENTER(lp->lo_uvp, lp->lo_lvp, li);
+	lp = lfind(lp->lo_uvp, lp->lo_lvp, li);
+
+	for (lsp = lp->lo_status; lsp != NULL; lspprev = lsp, lsp = lsp->los_next) {
+		if (lsp == lsptofree) {
+			if (lspprev == NULL) {
+				lp->lo_status = lsp->los_next;
+			} else {
+				lspprev->los_next = lsp->los_next;
+			}
+			TABLE_LOCK_EXIT(lp->lo_uvp, lp->lo_lvp, li);
+			kmem_cache_free(lnode_status_cache, lsp);
+			return;
+		}
+	}
+	panic("tryfreelonodestatus");
+	/*NOTREACHED*/
+}
+
+/*
+ * Create upper node attr.
+ */
+int
+mkuppervattr(vnode_t *lvp, vattr_t *uva, struct loinfo *li, struct cred *cr, caller_context_t *ct)
+{
+	int error;
+	vattr_t lva;
+
+	if ((error = VOP_GETATTR(lvp, &lva, 0, cr, ct)) != 0)
+		return (error);
+
+	uva->va_mask = AT_TYPE|AT_MODE;
+	uva->va_type = lva.va_type;
+	uva->va_atime = lva.va_atime;
+	uva->va_mtime = lva.va_mtime;
+	uva->va_ctime = lva.va_ctime;
+
+	if (li->li_flag & LO_TRANSPARENT) {
+		uva->va_mode = lva.va_mode;
+		uva->va_uid = lva.va_uid;
+		uva->va_gid = lva.va_gid;
+	} else {
+		uva->va_mode = PERMMASK & ~PTOU(curproc)->u_cmask;
+		uva->va_uid = li->li_uid;
+		uva->va_gid = li->li_gid;
+	}
+
+	return (error);
+}
+
+/*
+ * Whiteout the lower vnode of an lo vnode.
+ */
+int
+mkwhiteout(vnode_t *dvp, char *nm, struct cred *cr, caller_context_t *ct)
+{
+	int error;
+	vnode_t *ldvp, *vpp;
+	xvattr_t xvattr;
+	xoptattr_t *xoap;
+
+	error = ENOENT;
+	ldvp = reallvp(dvp);
+
+	if (ldvp != NULLVP) {
+		error = VOP_LOOKUP(ldvp, nm, &vpp, NULL, 0, NULL, cr, ct, NULL, NULL);
+		if (!error) {
+			error = VOP_ACCESS(vpp, VWRITE, 0, cr, ct);
+			if (!error) {
+				xva_init(&xvattr);
+				xoap = xva_getxoptattr(&xvattr);
+				ASSERT(xoap);
+				XVA_SET_REQ(&xvattr, XAT_WHITEOUT);
+				xoap->xoa_whiteout = 1;
+
+				error = VOP_SETATTR(vpp, &xvattr.xva_vattr, 0, cr, ct);
+			}
+			VN_RELE(vpp);
+		}
+	}
+
+	return (error);
+}
+
+/*
+ * Create the upper dir of an lo vnode.
+ */
+int
+mkshadowdir(vnode_t *dvp, char *nm, vnode_t *uvp, vnode_t *lvp, struct cred *cr, caller_context_t *ct) {
+	int error;
+	vnode_t *udvp;
+	vattr_t uva;
+
+	if (vn_is_readonly(dvp))
+		return (EROFS);
+
+	error = EROFS;
+	udvp = realuvp(dvp);
+
+	if (udvp != NULLVP) {
+		if ((error = VOP_ACCESS(udvp, VWRITE, 0, cr, ct)) != 0)
+			return (error);
+
+		if ((error = mkuppervattr(lvp, &uva, vtoli(dvp->v_vfsp), cr, ct)))
+			return (error);
+
+		if ((error = VOP_MKDIR(udvp, nm, &uva, &uvp, cr, NULL, 0, NULL)) != 0)
+			return (error);
+	}
+
+    return (error);
+}
+
+/*
+ * Copy the lower vnode of an lo vnode on the upper.
+ */
+int
+upper_copyfile_core(vnode_t *uvp, vnode_t *lvp, struct cred *cr, caller_context_t *ct)
+{
+	int error, count;
+	uio_t uio;
+	iovec_t iovec;
+	caddr_t mem;
+	offset_t loffset, bufloffset;
+
+	error = 0;
+
+	mem = kmem_zalloc(MAXBSIZE, KM_SLEEP);
+
+	uio.uio_segflg = UIO_SYSSPACE;
+	uio.uio_extflg = UIO_COPY_CACHED;
+	uio.uio_loffset = 0;
+
+	while (error == 0) {
+		loffset = uio.uio_loffset;
+
+		uio.uio_iov = &iovec;
+		uio.uio_iovcnt = 1;
+		iovec.iov_base = mem;
+		iovec.iov_len = MAXBSIZE;
+		uio.uio_resid = iovec.iov_len;
+		uio.uio_fmode = 0;
+
+		if (error = VOP_READ(lvp, &uio, 0, cr, ct))
+			break;
+		if ((count = MAXBSIZE - uio.uio_resid) == 0)
+			break;
+
+		bufloffset = 0;
+		while (bufloffset < count) {
+
+			uio.uio_iov = &iovec;
+			uio.uio_iovcnt = 1;
+			iovec.iov_base = mem + bufloffset;
+			iovec.iov_len = count - bufloffset;
+			uio.uio_offset = loffset + bufloffset;
+			uio.uio_resid = iovec.iov_len;
+			uio.uio_fmode = 1;
+
+			if (error = VOP_WRITE(uvp, &uio, 0, cr, ct))
+				break;
+
+			bufloffset += (count - bufloffset) - uio.uio_resid;
+		}
+
+		uio.uio_loffset = loffset + bufloffset;
+	}
+
+	kmem_free(mem, MAXBSIZE);
+
+	return (error);
+}
+
+int
+upper_copyfile(vnode_t *vp, struct cred *cr, caller_context_t *ct)
+{
+	int error;
+	vnode_t *dvp, *uvp, *lvp;
+	pathname_t pn_vp;
+	vattr_t uva;
+
+	lvp = reallvp(vp);
+
+	/* Check access lower vnode */
+	if ((error = VOP_ACCESS(lvp, VREAD, 0, cr, ct)) != 0)
+		return (error);
+
+	/* Get the dvp vnode */
+	if ((error = pn_get(vp->v_path, UIO_SYSSPACE, &pn_vp)) != 0)
+		return (error);
+
+	if ((error = lookuppnat(&pn_vp, NULL, 1, &dvp, NULL, (vtoli(vp->v_vfsp))->li_rootvp)) != 0) {
+		pn_free(&pn_vp);
+		return (error);
+	}
+
+	/* Get attributes from lower vnode */
+	if ((error = mkuppervattr(lvp, &uva, vtoli(vp->v_vfsp), cr, ct)))
+		return (error);
+
+	/* Create the upper vnode */
+	if ((error = VOP_CREATE(realuvp(dvp), pn_vp.pn_path, &uva, EXCL, 0, &uvp, cr, 0, ct, NULL)) !=0 )
+		goto out;
+
+	/* Update the lo node */
+	updatelonode(vp, uvp, vtoli(vp->v_vfsp));
+
+	/* Open the lower vnode in read only mode */
+	if ((error = VOP_OPEN(&lvp, FREAD, cr, ct)) != 0)
+		goto close_uvp;
+
+	/* Process the copyfile */
+	error = upper_copyfile_core(uvp, lvp, cr, ct);
+
+	VOP_CLOSE(lvp, 0, 0, 0, cr, ct);
+close_uvp:
+	VOP_CLOSE(uvp, 0, 0, 0, cr, ct);
+out:
+	VN_RELE(dvp);
+	pn_free(&pn_vp);
+	return (error);
 }
 
 #ifdef	LODEBUG

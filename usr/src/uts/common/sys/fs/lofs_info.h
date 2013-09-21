@@ -72,6 +72,8 @@ struct loinfo {
 	kmutex_t	 li_htlock;	/* protect hashtable, htsize, retired */
 	struct lo_retired_ht *li_retired; /* list of retired hashtables */
 	int		 li_flag;	/* filesystem behavior flags */
+	uid_t	li_uid;
+	gid_t	li_gid;
 };
 
 /* inheritable mount flags - propagated from real vfs to loopback */
@@ -87,11 +89,14 @@ struct loinfo {
 #define	MNTOPT_LOFS_SUB		"sub"
 #define MNTOPT_LOFS_NOUNION     "nounion"
 #define MNTOPT_LOFS_UNION       "union"
+#define MNTOPT_LOFS_NOTRANSPARENT    "notransparent"
+#define MNTOPT_LOFS_TRANSPARENT       "transparent"
 
 /*
  * Flag values (for li_flag)
  */
 #define	LO_NOSUB	0x02	/* don't traverse sub-mounts */
+#define LO_TRANSPARENT	0x04	/* transparent flag for union mount */
 
 /*
  * lfsnodes are allocated as new real vfs's are encountered

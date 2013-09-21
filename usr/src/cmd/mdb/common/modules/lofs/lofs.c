@@ -208,8 +208,8 @@ lnode(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		return (DCMD_USAGE);
 
 	if (DCMD_HDRSPEC(flags)) {
-		mdb_printf("%<u>%?s %?s %?s%</u>\n",
-		    "LNODE", "VNODE", "REALVP");
+		mdb_printf("%<u>%?s %?s %?s %?s%</u>\n",
+		    "LNODE", "VNODE", "REALUVP", "REALLVP");
 	}
 
 	if (flags & DCMD_ADDRSPEC) {
