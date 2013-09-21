@@ -815,6 +815,7 @@ getlonodestatus(struct vnode *vp, struct lnode_status **lspp, struct loinfo *li)
 
 	TABLE_LOCK_ENTER(uvp, lvp, li);
 	lp = lfind(uvp, lvp, li);
+	VN_RELE(lp->lo_vnode);
 
 	lsp = tlsp = lp->lo_status;
 	while (lsp != NULL) {
@@ -857,6 +858,7 @@ tryfreelonodestatus(struct lnode *lp, struct lnode_status *lsptofree)
 
 	TABLE_LOCK_ENTER(lp->lo_uvp, lp->lo_lvp, li);
 	lp = lfind(lp->lo_uvp, lp->lo_lvp, li);
+	VN_RELE(lp->lo_vnode);
 
 	for (lsp = lp->lo_status; lsp != NULL; lspprev = lsp, lsp = lsp->los_next) {
 		if (lsp == lsptofree) {

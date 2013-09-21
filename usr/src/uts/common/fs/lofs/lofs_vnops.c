@@ -78,7 +78,7 @@ lo_open(vnode_t **vpp, int flag, struct cred *cr, caller_context_t *ct)
 	if (tvp == NULLVP) {
 		if (uvp == NULLVP) {
 			if ((flag & FWRITE) && (lvp->v_type == VREG)) {
-				if (error = upper_copyfile(vp, cr, ct))
+				if ((error = upper_copyfile(vp, cr, ct)) != 0)
 					goto out;
 				tvp = realuvp(vp);
 			} else {
@@ -254,7 +254,7 @@ lo_setfl(vnode_t *vp, int oflags, int nflags, cred_t *cr, caller_context_t *ct)
 	lvp = reallvp(vp);
 
 	if (uvp == NULLVP && lvp->v_type == VREG) {
-		if (error = upper_copyfile(vp, cr, ct))
+		if ((error = upper_copyfile(vp, cr, ct)) != 0)
 			return (error);
 		uvp = realuvp(vp);
 	}
@@ -305,7 +305,7 @@ lo_setattr(
 	lvp = reallvp(vp);
 
 	if (uvp == NULLVP && lvp->v_type == VREG) {
-		if (error = upper_copyfile(vp, cr, ct))
+		if ((error = upper_copyfile(vp, cr, ct)) != 0)
 			return (error);
 		uvp = realuvp(vp);
 	}
@@ -1403,7 +1403,6 @@ out:
 	return error;
 }
 
-
 static int
 lo_rwlock(vnode_t *vp, int write_lock, caller_context_t *ct)
 {
@@ -1413,16 +1412,18 @@ lo_rwlock(vnode_t *vp, int write_lock, caller_context_t *ct)
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
-	if (lvp != NULLVP)
-		if (error = VOP_RWLOCK(lvp, write_lock, ct));
-			goto out;
+	if (lvp != NULLVP) {
+		if (write_lock != (error = VOP_RWLOCK(lvp, write_lock, ct)));
+			return (error);
+	}
 
-	if (uvp != NULLVP)
-		if (error = VOP_RWLOCK(uvp, write_lock, ct))
+	if (uvp != NULLVP) {
+		if (write_lock != (error = VOP_RWLOCK(uvp, write_lock, ct))) {
 			if (lvp != NULLVP)
 				VOP_RWUNLOCK(lvp, write_lock, ct);
+		}
+	}
 
-out:
 	return (error);
 }
 
@@ -1613,7 +1614,7 @@ lo_map(
 	if (tvp == NULLVP) {
 		if (uvp == NULLVP) {
 			if ((prot & PROT_WRITE) && (lvp->v_type == VREG)) {
-				if (error = upper_copyfile(vp, cr, ct))
+				if ((error = upper_copyfile(vp, cr, ct)) != 0)
 					goto out;
 				tvp = realuvp(vp);
 			} else {
@@ -1826,7 +1827,7 @@ lo_setsecattr(
 	lvp = reallvp(vp);
 
 	if (uvp == NULLVP && lvp->v_type == VREG) {
-		if (error = upper_copyfile(vp, cr, ct))
+		if ((error = upper_copyfile(vp, cr, ct)) != 0)
 			return (error);
 		uvp = realuvp(vp);
 	}
