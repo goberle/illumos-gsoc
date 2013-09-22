@@ -1406,25 +1406,27 @@ out:
 static int
 lo_rwlock(vnode_t *vp, int write_lock, caller_context_t *ct)
 {
-	int error = 0;
+	int ret = 0;
 	vnode_t *uvp, *lvp;
 
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
 	if (lvp != NULLVP) {
-		if (write_lock != (error = VOP_RWLOCK(lvp, write_lock, ct)));
-			return (error);
+		ret = VOP_RWLOCK(lvp, write_lock, ct);
+		if (write_lock != ret);
+			return (ret);
 	}
 
 	if (uvp != NULLVP) {
-		if (write_lock != (error = VOP_RWLOCK(uvp, write_lock, ct))) {
+		ret = VOP_RWLOCK(uvp, write_lock, ct);
+		if (write_lock != ret) {
 			if (lvp != NULLVP)
 				VOP_RWUNLOCK(lvp, write_lock, ct);
 		}
 	}
 
-	return (error);
+	return (ret);
 }
 
 static void
@@ -1446,11 +1448,17 @@ static int
 lo_seek(vnode_t *vp, offset_t ooff, offset_t *noffp, caller_context_t *ct)
 {
 	vnode_t *uvp, *lvp, *tvp;
+	lnode_status_t *lsp;
 
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
-	tvp = (uvp != NULLVP ? uvp : lvp);
+	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
+	tvp = (lsp->los_upper_opencnt ? uvp : lvp);
+	tryfreelonodestatus(vtol(vp), lsp);
+
+	if (tvp == NULLVP)
+		return (EBADF);
 
 	return (VOP_SEEK(tvp, ooff, noffp, ct));
 }
@@ -1549,7 +1557,7 @@ lo_getpage(
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	tvp = (lsp->los_upper_opencnt ? uvp : lvp);
+	tvp = (lsp->los_upper_mapcnt ? uvp : lvp);
 	tryfreelonodestatus(vtol(vp), lsp);
 
 	if (tvp == NULLVP)
@@ -1574,7 +1582,7 @@ lo_putpage(
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	tvp = (lsp->los_upper_opencnt ? uvp : lvp);
+	tvp = (lsp->los_upper_mapcnt ? uvp : lvp);
 	tryfreelonodestatus(vtol(vp), lsp);
 
 	if (tvp == NULLVP)
@@ -1658,7 +1666,7 @@ lo_addmap(
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	tvp = (lsp->los_upper_opencnt ? uvp : lvp);
+	tvp = (lsp->los_upper_mapcnt ? uvp : lvp);
 	if (tvp == NULLVP)
 		return (EBADF);
 
@@ -1690,7 +1698,7 @@ lo_delmap(
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	tvp = (lsp->los_upper_opencnt ? uvp : lvp);
+	tvp = (lsp->los_upper_mapcnt ? uvp : lvp);
 	if (tvp == NULLVP)
 		return (EBADF);
 
@@ -1776,7 +1784,7 @@ lo_pageio(
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	tvp = (lsp->los_upper_opencnt ? uvp : lvp);
+	tvp = (lsp->los_upper_mapcnt ? uvp : lvp);
 	tryfreelonodestatus(vtol(vp), lsp);
 
 	if (tvp == NULLVP)
@@ -1801,7 +1809,7 @@ lo_dispose(
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	tvp = (lsp->los_upper_opencnt ? uvp : lvp);
+	tvp = (lsp->los_upper_mapcnt ? uvp : lvp);
 	tryfreelonodestatus(vtol(vp), lsp);
 
 	if (tvp != NULL && !VN_ISKAS(tvp))
