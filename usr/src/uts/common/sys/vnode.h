@@ -1179,7 +1179,7 @@ extern int	fop_retzcbuf(vnode_t *, xuio_t *, cred_t *, caller_context_t *);
 #define	LOOKUP_XATTR		0x02	/* lookup up extended attr dir */
 #define	CREATE_XATTR_DIR	0x04	/* Create extended attr dir */
 #define	LOOKUP_HAVE_SYSATTR_DIR	0x08	/* Already created virtual GFS dir */
-#define	LOOKUP_NOWHITEOUT		0x10	/* filter out whiteout nodes */
+#define	LOOKUP_NOWHITEOUT	0x10	/* filter out whiteout nodes */
 
 /*
  * Flags for VOP_READDIR

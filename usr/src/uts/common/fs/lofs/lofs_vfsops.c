@@ -399,10 +399,10 @@ lo_mount(struct vfs *vfsp,
 
 	if (vfs_optionisset(vfsp, MNTOPT_LOFS_TRANSPARENT, NULL)) {
 		li->li_flag |= LO_TRANSPARENT;
-	} else {
-		li->li_uid = crgetruid(cr);
-		li->li_gid = crgetrgid(cr);
 	}
+
+	li->li_uid = crgetruid(cr);
+	li->li_gid = crgetrgid(cr);
 
 	/*
 	 * Propagate any VFS features

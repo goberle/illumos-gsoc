@@ -72,8 +72,8 @@ struct loinfo {
 	kmutex_t	 li_htlock;	/* protect hashtable, htsize, retired */
 	struct lo_retired_ht *li_retired; /* list of retired hashtables */
 	int		 li_flag;	/* filesystem behavior flags */
-	uid_t	li_uid;
-	gid_t	li_gid;
+	uid_t	li_uid;		/* uid of the user who mounted the filesystem */
+	gid_t	li_gid;		/* gid of the user who mounted the filesystem */
 };
 
 /* inheritable mount flags - propagated from real vfs to loopback */
