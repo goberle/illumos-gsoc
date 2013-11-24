@@ -68,10 +68,10 @@ lo_open(vnode_t **vpp, int flag, struct cred *cr, caller_context_t *ct)
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	if (lsp->los_upper_opencnt > 0 || lsp->los_lower_opencnt > 0) {
+	if ((lsp->los_upper_opencnt > 0) || (lsp->los_lower_opencnt > 0)) {
 		(lsp->los_upper_opencnt > 0) ? (tvp = uvp) : (tvp = lvp);
 
-		if (tvp == lvp && (flag & FWRITE) && lvp->v_type == VREG)
+		if ((tvp == lvp) && (flag & FWRITE) && (lvp->v_type == VREG))
 			tvp = NULLVP; 
 	}
 
@@ -164,7 +164,7 @@ lo_close(
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
 
-	if (lsp->los_upper_opencnt <= 0 && lsp->los_lower_opencnt <=0) {
+	if ((lsp->los_upper_opencnt <= 0) && (lsp->los_lower_opencnt <=0)) {
 		tvp = (uvp != NULLVP ? uvp : lvp);
 	} else if (lsp->los_upper_opencnt > 0) {
 		tvp = uvp;
@@ -253,7 +253,7 @@ lo_setfl(vnode_t *vp, int oflags, int nflags, cred_t *cr, caller_context_t *ct)
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
-	if (uvp == NULLVP && lvp->v_type == VREG) {
+	if ((uvp == NULLVP) && (lvp->v_type == VREG)) {
 		if ((error = upper_copyfile(vp, cr, ct)) != 0)
 			return (error);
 		uvp = realuvp(vp);
@@ -304,7 +304,7 @@ lo_setattr(
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
-	if (uvp == NULLVP && lvp->v_type == VREG) {
+	if ((uvp == NULLVP) && (lvp->v_type == VREG)) {
 		if ((error = upper_copyfile(vp, cr, ct)) != 0)
 			return (error);
 		uvp = realuvp(vp);
@@ -330,7 +330,7 @@ lo_access(
 	lo_dprint(4, "lo_access vp %p realvp %p\n", vp, realuvp(vp));
 #endif
 	if (mode & VWRITE) {
-		if (vp->v_type == VREG && vn_is_readonly(vp))
+		if ((vp->v_type == VREG) && vn_is_readonly(vp))
 			return (EROFS);
 	}
 
@@ -1612,10 +1612,10 @@ lo_map(
 	lvp = reallvp(vp);
 
 	getlonodestatus(vp, &lsp, vtoli(vp->v_vfsp));
-	if (lsp->los_upper_mapcnt > 0 || lsp->los_lower_mapcnt > 0) {
+	if ((lsp->los_upper_mapcnt > 0) || (lsp->los_lower_mapcnt > 0)) {
 		(lsp->los_upper_mapcnt > 0) ? (tvp = uvp) : (tvp = lvp);
 
-		if (tvp == lvp && (prot & PROT_WRITE) && lvp->v_type == VREG)
+		if ((tvp == lvp) && (prot & PROT_WRITE) && (lvp->v_type == VREG))
 			tvp = NULLVP; 
 	}
 
@@ -1834,7 +1834,7 @@ lo_setsecattr(
 	uvp = realuvp(vp);
 	lvp = reallvp(vp);
 
-	if (uvp == NULLVP && lvp->v_type == VREG) {
+	if ((uvp == NULLVP) && (lvp->v_type == VREG)) {
 		if ((error = upper_copyfile(vp, cr, ct)) != 0)
 			return (error);
 		uvp = realuvp(vp);

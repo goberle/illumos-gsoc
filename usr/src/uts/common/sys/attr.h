@@ -73,7 +73,7 @@ extern "C" {
 #define	O_REPARSE_POINT	 "r"
 #define	O_OFFLINE	 "O"
 #define	O_SPARSE	 "s"
-#define	O_WHITEOUT	 "w"
+#define	O_WHITEOUT	 "W"
 #define	O_NONE		 ""
 
 /* ownersid and groupsid are composed of two nvpairs */

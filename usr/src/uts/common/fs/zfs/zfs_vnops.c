@@ -2263,17 +2263,6 @@ zfs_readdir(vnode_t *vp, uio_t *uio, cred_t *cr, int *eofp,
 			}
 		}
 
-		if (flags & V_RDDIR_NOWHITEOUT) {
-			znode_t	*ezp;
-			if (zfs_zget(zp->z_zfsvfs, objnum, &ezp) != 0)
-				goto skip_entry;
-			if (ezp->z_pflags & ZFS_WHITEOUT) {
-				VN_RELE(ZTOV(ezp));
-				goto skip_entry;
-			}
-			VN_RELE(ZTOV(ezp));
-		}
-
 		if (flags & V_RDDIR_ACCFILTER) {
 			/*
 			 * If we have no access at all, don't include
@@ -2283,6 +2272,17 @@ zfs_readdir(vnode_t *vp, uio_t *uio, cred_t *cr, int *eofp,
 			if (zfs_zget(zp->z_zfsvfs, objnum, &ezp) != 0)
 				goto skip_entry;
 			if (!zfs_has_access(ezp, cr)) {
+				VN_RELE(ZTOV(ezp));
+				goto skip_entry;
+			}
+			VN_RELE(ZTOV(ezp));
+		}
+
+		if (flags & V_RDDIR_NOWHITEOUT) {
+			znode_t	*ezp;
+			if (zfs_zget(zp->z_zfsvfs, objnum, &ezp) != 0)
+				goto skip_entry;
+			if (ezp->z_pflags & ZFS_WHITEOUT) {
 				VN_RELE(ZTOV(ezp));
 				goto skip_entry;
 			}
