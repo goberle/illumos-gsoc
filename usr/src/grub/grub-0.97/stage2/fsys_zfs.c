@@ -23,7 +23,7 @@
  */
 
 /*
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright (c) 2013 by Saso Kiselkov. All rights reserved.
  */
 
@@ -960,9 +960,13 @@ get_default_bootfsobj(dnode_phys_t *mosmdn, uint64_t *obj, char *stack)
  * List of pool features that the grub implementation of ZFS supports for
  * read. Note that features that are only required for write do not need
  * to be listed here since grub opens pools in read-only mode.
+ *
+ * When this list is updated the version number in usr/src/grub/capability
+ * must be incremented to ensure the new grub gets installed.
  */
 static const char *spa_feature_names[] = {
 	"org.illumos:lz4_compress",
+	"com.delphix:extensible_dataset",
 	NULL
 };
 
@@ -1041,7 +1045,7 @@ get_objset_mdn(dnode_phys_t *mosmdn, char *fsname, uint64_t *obj,
 	    stack))
 		return (errnum);
 
-	if (errnum = dnode_get(mosmdn, objnum, DMU_OT_DSL_DIR, mdn, stack))
+	if (errnum = dnode_get(mosmdn, objnum, 0, mdn, stack))
 		return (errnum);
 
 	if (fsname == NULL) {
@@ -1083,7 +1087,7 @@ get_objset_mdn(dnode_phys_t *mosmdn, char *fsname, uint64_t *obj,
 		if (zap_lookup(mdn, cname, &objnum, stack))
 			return (ERR_FILESYSTEM_NOT_FOUND);
 
-		if (errnum = dnode_get(mosmdn, objnum, DMU_OT_DSL_DIR,
+		if (errnum = dnode_get(mosmdn, objnum, 0,
 		    mdn, stack))
 			return (errnum);
 
@@ -1096,7 +1100,7 @@ get_objset_mdn(dnode_phys_t *mosmdn, char *fsname, uint64_t *obj,
 		*obj = headobj;
 
 skip:
-	if (errnum = dnode_get(mosmdn, headobj, DMU_OT_DSL_DATASET, mdn, stack))
+	if (errnum = dnode_get(mosmdn, headobj, 0, mdn, stack))
 		return (errnum);
 	if (issnapshot) {
 		uint64_t snapobj;
@@ -1109,8 +1113,7 @@ skip:
 			return (errnum);
 		if (zap_lookup(mdn, snapname + 1, &headobj, stack))
 			return (ERR_FILESYSTEM_NOT_FOUND);
-		if (errnum = dnode_get(mosmdn, headobj,
-		    DMU_OT_DSL_DATASET, mdn, stack))
+		if (errnum = dnode_get(mosmdn, headobj, 0, mdn, stack))
 			return (errnum);
 		if (obj)
 			*obj = headobj;

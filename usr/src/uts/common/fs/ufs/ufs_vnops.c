@@ -21,6 +21,7 @@
 
 /*
  * Copyright (c) 1984, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  */
 
 /*	Copyright (c) 1983, 1984, 1985, 1986, 1987, 1988, 1989 AT&T	*/
@@ -2191,6 +2192,9 @@ again:
 			rw_enter(&ip->i_contents, RW_WRITER);
 			goto update_inode;
 		}
+
+		if (error == 0 && vap->va_size)
+			vnevent_truncate(vp, ct);
 	}
 
 	if (ulp) {
@@ -3363,7 +3367,6 @@ ufs_rename(
 	struct inode *ip = NULL;	/* check inode */
 	struct inode *sdp;		/* old (source) parent inode */
 	struct inode *tdp;		/* new (target) parent inode */
-	struct vnode *svp = NULL;	/* source vnode */
 	struct vnode *tvp = NULL;	/* target vnode, if it exists */
 	struct vnode *realvp;
 	struct ufsvfs *ufsvfsp;
@@ -3376,7 +3379,7 @@ ufs_rename(
 	krwlock_t *first_lock;
 	krwlock_t *second_lock;
 	krwlock_t *reverse_lock;
-	int serr, terr;
+	int terr;
 
 	sdp = VTOI(sdvp);
 	slot.fbp = NULL;
@@ -3384,30 +3387,6 @@ ufs_rename(
 
 	if (VOP_REALVP(tdvp, &realvp, ct) == 0)
 		tdvp = realvp;
-
-	terr = ufs_eventlookup(tdvp, tnm, cr, &tvp);
-	serr = ufs_eventlookup(sdvp, snm, cr, &svp);
-
-	if ((serr == 0) && ((terr == 0) || (terr == ENOENT))) {
-		if (tvp != NULL)
-			vnevent_rename_dest(tvp, tdvp, tnm, ct);
-
-		/*
-		 * Notify the target directory of the rename event
-		 * if source and target directories are not the same.
-		 */
-		if (sdvp != tdvp)
-			vnevent_rename_dest_dir(tdvp, ct);
-
-		if (svp != NULL)
-			vnevent_rename_src(svp, sdvp, snm, ct);
-	}
-
-	if (tvp != NULL)
-		VN_RELE(tvp);
-
-	if (svp != NULL)
-		VN_RELE(svp);
 
 retry_rename:
 	error = ufs_lockfs_begin(ufsvfsp, &ulp, ULOCKFS_RENAME_MASK);
@@ -3694,6 +3673,8 @@ retry_firstlock:
 		}
 	}
 
+	terr = ufs_eventlookup(tdvp, tnm, cr, &tvp);
+
 	/*
 	 * Link source to the target.
 	 */
@@ -3708,6 +3689,9 @@ retry_firstlock:
 		goto errout;
 	}
 
+	if (terr == 0 && tvp != NULL)
+		vnevent_rename_dest(tvp, tdvp, tnm, ct);
+
 	/*
 	 * Unlink the source.
 	 * Remove the source entry.  ufs_dirremove() checks that the entry
@@ -3719,6 +3703,14 @@ retry_firstlock:
 	    DR_RENAME, cr)) == ENOENT)
 		error = 0;
 
+	vnevent_rename_src(ITOV(sip), sdvp, snm, ct);
+	/*
+	 * Notify the target directory of the rename event
+	 * if source and target directories are not the same.
+	 */
+	if (sdvp != tdvp)
+		vnevent_rename_dest_dir(tdvp, ct);
+
 errout:
 	if (slot.fbp)
 		fbrelse(slot.fbp, S_OTHER);
@@ -3728,6 +3720,8 @@ errout:
 		rw_exit(&sdp->i_rwlock);
 	}
 
+	if (tvp != NULL)
+		VN_RELE(tvp);
 	VN_RELE(ITOV(sip));
 
 unlock:
@@ -4460,6 +4454,9 @@ ufs_space(struct vnode *vp, int cmd, struct flock64 *bfp, int flag,
 			if (error)
 				return (error);
 			error = ufs_freesp(vp, bfp, flag, cr);
+
+			if (error == 0 && bfp->l_start == 0)
+				vnevent_truncate(vp, ct);
 		} else if (cmd == F_ALLOCSP) {
 			error = ufs_lockfs_begin(ufsvfsp, &ulp,
 			    ULOCKFS_FALLOCATE_MASK);

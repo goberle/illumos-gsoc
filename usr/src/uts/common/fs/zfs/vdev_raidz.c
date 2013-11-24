@@ -22,7 +22,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
- * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
@@ -1554,15 +1554,15 @@ vdev_raidz_close(vdev_t *vd)
  *         |        |        |        |        |
  *   8 KB parity    ------8 KB data blocks------
  *
- * However, when writing to the dump device, the layout is different:
+ * However, when writing to the dump device, the behavior is different:
  *
  *     vdev_raidz_physio(data, size: 32 KB, offset: 64 KB)
  *
  * Unlike the normal RAID-Z case in which the block is allocated based on the
- * I/O size, reads and writes here always use a 128 KB logical I/O size.  is
- * less than 128 KB, only the actual portions of data are written.  In this
- * example the data is written to the third data vdev since that vdev contains
- * the offset [64 KB, 96 KB).
+ * I/O size, reads and writes here always use a 128 KB logical I/O size.  If the
+ * I/O size is less than 128 KB, only the actual portions of data are written.
+ * In this example the data is written to the third data vdev since that vdev
+ * contains the offset [64 KB, 96 KB).
  *
  *       parity    data     data     data     data
  *     |        |        |        |   XX   |        |
@@ -1586,7 +1586,7 @@ vdev_raidz_close(vdev_t *vd)
  */
 int
 vdev_raidz_physio(vdev_t *vd, caddr_t data, size_t size,
-    uint64_t offset, uint64_t origoffset, boolean_t doread)
+    uint64_t offset, uint64_t origoffset, boolean_t doread, boolean_t isdump)
 {
 	vdev_t *tvd = vd->vdev_top;
 	vdev_t *cvd;
@@ -1659,7 +1659,7 @@ vdev_raidz_physio(vdev_t *vd, caddr_t data, size_t size,
 		if ((err = vdev_disk_physio(cvd,
 		    ((char *)rc->rc_data) + colskip, colsize,
 		    VDEV_LABEL_OFFSET(rc->rc_offset) + colskip,
-		    flags)) != 0)
+		    flags, isdump)) != 0)
 			break;
 	}
 
@@ -2340,7 +2340,7 @@ done:
 
 			zio_nowait(zio_vdev_child_io(zio, NULL, cvd,
 			    rc->rc_offset, rc->rc_data, rc->rc_size,
-			    ZIO_TYPE_WRITE, zio->io_priority,
+			    ZIO_TYPE_WRITE, ZIO_PRIORITY_ASYNC_WRITE,
 			    ZIO_FLAG_IO_REPAIR | (unexpected_errors ?
 			    ZIO_FLAG_SELF_HEAL : 0), NULL, NULL));
 		}

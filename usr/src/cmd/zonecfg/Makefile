@@ -27,6 +27,7 @@ PROG=	zonecfg
 OBJS=	zonecfg.o zonecfg_lex.o zonecfg_grammar.tab.o
 
 include ../Makefile.cmd
+include ../Makefile.ctf
 
 # zonecfg has a name clash with main() and libl.so.1.  However, zonecfg must
 # still export a number of "yy*" (libl) interfaces.  Reduce all other symbols
@@ -45,6 +46,8 @@ CERRWARN +=	-_gcc=-Wno-uninitialized
 CERRWARN +=	-_gcc=-Wno-unused-label
 CERRWARN +=	-_gcc=-Wno-unused-variable
 CERRWARN +=	-_gcc=-Wno-implicit-function-declaration
+
+CLOBBERFILES += $(PROG).ln
 
 .KEEP_STATE:
 

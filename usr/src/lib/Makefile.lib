@@ -159,13 +159,6 @@ BUILD.SO=	$(CC) -o $@ $(GSHARED) $(DYNFLAGS) $(PICS) $(EXTPICS) $(LDLIBS)
 BUILDCCC.SO=	$(CCC) -o $@ $(GSHARED) $(DYNFLAGS) $(PICS) $(EXTPICS) $(LDLIBS)
 
 # default dynamic library symlink
-# IMPORTANT:: If you change INS.liblink OR INS.liblink64 here, then you 
-# MUST also change the corresponding override definitions in
-# $CLOSED/Makefile.tonic.
-#
-# If you do not do this, then the closedbins build for the OpenSolaris
-# community will break. PS, the gatekeepers will be upset too.
-#
 INS.liblink=	-$(RM) $@; $(SYMLINK) $(LIBLINKPATH)$(LIBLINKS)$(VERS) $@
 INS.liblinkccc=	-$(RM) $@; $(SYMLINK) $(LIBLINKPATH)$(LIBLINKSCCC)$(VERS) $@
 
@@ -187,7 +180,7 @@ CTFMERGE_POST	= :
 POST_PROCESS_O += ; $(CTFCONVERT_POST)
 POST_PROCESS_SO += ; $(CTFMERGE_POST)
 
-CTFMERGE_LIB	= $(CTFMERGE) -t -f -L VERSION -o $@ $(PICS)
+CTFMERGE_LIB	= $(CTFMERGE) $(CTFMRGFLAGS) -t -f -L VERSION -o $@ $(PICS)
 
 # conditional assignments
 

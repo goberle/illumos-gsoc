@@ -792,6 +792,10 @@ tmp_setattr(
 		error = tmpnode_trunc(tm, tp, (ulong_t)vap->va_size);
 		rw_exit(&tp->tn_contents);
 		rw_exit(&tp->tn_rwlock);
+
+		if (error == 0 && vap->va_size == 0)
+			vnevent_truncate(vp, ct);
+
 		goto out1;
 	}
 out:
@@ -1191,7 +1195,7 @@ tmp_rename(
 	struct tmpnode *toparent;
 	struct tmpnode *fromtp = NULL;	/* source tmpnode */
 	struct tmount *tm = (struct tmount *)VTOTM(odvp);
-	int error;
+	int error, err;
 	int samedir = 0;	/* set if odvp == ndvp */
 	struct vnode *realvp;
 
@@ -1267,15 +1271,6 @@ tmp_rename(
 			error = 0;
 		goto done;
 	}
-	vnevent_rename_src(TNTOV(fromtp), odvp, onm, ct);
-
-	/*
-	 * Notify the target directory if not same as
-	 * source directory.
-	 */
-	if (ndvp != odvp) {
-		vnevent_rename_dest_dir(ndvp, ct);
-	}
 
 	/*
 	 * Unlink from source.
@@ -1283,7 +1278,7 @@ tmp_rename(
 	rw_enter(&fromparent->tn_rwlock, RW_WRITER);
 	rw_enter(&fromtp->tn_rwlock, RW_WRITER);
 
-	error = tdirdelete(fromparent, fromtp, onm, DR_RENAME, cred);
+	error = err = tdirdelete(fromparent, fromtp, onm, DR_RENAME, cred);
 
 	/*
 	 * The following handles the case where our source tmpnode was
@@ -1298,6 +1293,14 @@ tmp_rename(
 
 	rw_exit(&fromtp->tn_rwlock);
 	rw_exit(&fromparent->tn_rwlock);
+
+	if (err == 0) {
+		vnevent_rename_src(TNTOV(fromtp), odvp, onm, ct);
+		/* Notify the target dir if not same as source dir. */
+		if (ndvp != odvp)
+			vnevent_rename_dest_dir(ndvp, ct);
+	}
+
 done:
 	tmpnode_rele(fromtp);
 	mutex_exit(&tm->tm_renamelck);
@@ -2368,6 +2371,9 @@ tmp_space(
 		if ((bfp->l_start > MAXOFF_T) || (bfp->l_len > MAXOFF_T))
 			return (EFBIG);
 		error = tmp_freesp(vp, bfp, flag);
+
+		if (error == 0 && bfp->l_start == 0)
+			vnevent_truncate(vp, ct);
 	}
 	return (error);
 }

@@ -20,7 +20,8 @@
 #
 #
 # Copyright (c) 1989, 2010, Oracle and/or its affiliates. All rights reserved.
-# Copyright 2012, Joyent, Inc. All rights reserved.
+# Copyright 2013, Joyent, Inc. All rights reserved.
+# Copyright 2013 Garrett D'Amore <garrett@damore.org>
 #
 
 include $(SRC)/uts/Makefile.uts
@@ -157,7 +158,7 @@ CHKHDRS=			\
 	ddi_impldefs.h		\
 	ddi_implfuncs.h		\
 	ddi_obsolete.h		\
-	ddi_timer.h		\
+	ddi_periodic.h		\
 	ddidevmap.h		\
 	ddidmareq.h		\
 	ddimapreq.h		\
@@ -892,14 +893,6 @@ FSHDRS=				\
 	zfs.h			\
 	zut.h
 
-PCMCIAHDRS=		\
-	pcata.h		\
-	pcser_conf.h	\
-	pcser_io.h	\
-	pcser_reg.h	\
-	pcser_manuspec.h \
-	pcser_var.h
-
 SCSIHDRS=		\
 	scsi.h		\
 	scsi_address.h	\
@@ -1193,7 +1186,6 @@ CHECKHDRS=						\
 	$(FMIOHDRS:%.h=fm/io/%.check)			\
 	$(FSHDRS:%.h=fs/%.check)			\
 	$(LVMHDRS:%.h=lvm/%.check)			\
-	$(PCMCIAHDRS:%.h=pcmcia/%.check)		\
 	$(SCSIHDRS:%.h=scsi/%.check)			\
 	$(SCSIADHDRS:%.h=scsi/adapters/%.check)		\
 	$(SCSICONFHDRS:%.h=scsi/conf/%.check)		\
@@ -1263,7 +1255,6 @@ CHECKHDRS=						\
 	$(ROOTHERMONHDRS)	\
 	$(ROOTMLNXHDRS)		\
 	$(ROOTLVMHDRS)		\
-	$(ROOTPCMCIAHDRS)	\
 	$(ROOTSCSIHDRS)		\
 	$(ROOTSCSIADHDRS)	\
 	$(ROOTSCSICONFHDRS)	\
@@ -1333,7 +1324,6 @@ install_h:			\
 	$(ROOTHERMONHDRS)	\
 	$(ROOTMLNXHDRS)		\
 	$(ROOTLVMHDRS)		\
-	$(ROOTPCMCIAHDRS)	\
 	$(ROOTSCSIHDRS)		\
 	$(ROOTSCSIADHDRS)	\
 	$(ROOTSCSIISCSIHDRS)	\
@@ -1376,26 +1366,14 @@ usb/usbdevs.h: $(USBDEVS_AWK) $(USBDEVS_DATA)
 	$(NAWK) -f $(USBDEVS_AWK) $(USBDEVS_DATA) -H > $@
 
 LVMDERIVED_H:
-	cd $(SRC)/uts/common/sys/lvm; pwd; $(MAKE)
+	cd $(SRC)/uts/common/sys/lvm; pwd; $(MAKE) all_h
 
 clean:
 	$(RM) $(GENHDRS)
 
-clobber:	clean
+clobber: clean
+	cd $(SRC)/uts/common/sys/lvm; pwd; $(MAKE) clobber
 
 check:	$(CHECKHDRS)
 
 FRC:
-
-# EXPORT DELETE START
-EXPORT_SRC:
-	$(RM) wanboot_impl.h+ Makefile+
-	sed -e "/EXPORT DELETE START/,/EXPORT DELETE END/d" \
-		< wanboot_impl.h > wanboot_impl.h+
-	$(MV) wanboot_impl.h+ wanboot_impl.h
-	sed -e "/^# EXPORT DELETE START/,/^# EXPORT DELETE END/d" \
-		< Makefile > Makefile+
-	$(RM) Makefile
-	$(MV) Makefile+ Makefile
-	$(CHMOD) 444 Makefile wanboot_impl.h
-# EXPORT DELETE END

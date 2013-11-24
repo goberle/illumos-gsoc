@@ -205,7 +205,8 @@ PKGDEP_INCORP= \
 # All packaging build products should go into $(PDIR), so they don't
 # need to be included separately in CLOBBERFILES.
 #
-CLOBBERFILES= $(PDIR) proto_list_$(PKGMACH)
+CLOBBERFILES= $(PDIR) proto_list_$(PKGMACH) install-$(PKGMACH).out \
+	license-list
 
 #
 # By default, PKGS will list all manifests.  To build and/or publish a
@@ -718,23 +719,3 @@ i386/% sparc/%:
 i386 sparc: $$(@)/install
 
 FRC:
-
-# EXPORT DELETE START
-XMOD_PKGS= \
-	BRCMbnx \
-	BRCMbnxe \
-	SUNWadpu320 \
-	SUNWibsdpib \
-	SUNWkdc \
-	SUNWlsimega \
-	SUNWwbint \
-	SUNWwbsup
-
-EXPORT_SRC: CRYPT_SRC
-	$(RM) $(XMOD_PKGS:%=manifests/%.mf)
-	$(RM) Makefile+
-	$(SED) -e "/^# EXPORT DELETE START/,/^# EXPORT DELETE END/d" \
-		< Makefile > Makefile+
-	$(MV) -f Makefile+ Makefile
-	$(CHMOD) 444 Makefile
-# EXPORT DELETE END

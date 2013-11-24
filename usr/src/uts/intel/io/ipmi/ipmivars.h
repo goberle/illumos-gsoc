@@ -28,7 +28,7 @@
 
 /*
  * Copyright 2012, Joyent, Inc.  All rights reserved.
- * Copyright 2013, Nexenta Systems, Inc.  All rights reserved.
+ * Copyright 2013 Nexenta Systems, Inc.  All rights reserved.
  */
 
 #ifndef _IPMIVARS_H_
@@ -44,6 +44,14 @@ extern "C" {
 struct ipmi_device;
 struct ipmi_request;
 
+typedef enum {
+	IRS_ALLOCATED,
+	IRS_QUEUED,
+	IRS_PROCESSED,
+	IRS_COMPLETED,
+	IRS_CANCELED
+} ir_status_t;
+
 struct ipmi_request {
 	TAILQ_ENTRY(ipmi_request) ir_link;
 	struct ipmi_device *ir_owner;	/* Driver uses NULL. */
@@ -58,6 +66,9 @@ struct ipmi_request {
 	uint8_t		ir_command;
 	uint8_t		ir_compcode;
 	int		ir_sz;		/* size of request */
+
+	kcondvar_t	ir_cv;
+	ir_status_t	ir_status;
 };
 
 #define	MAX_RES				3
@@ -68,6 +79,8 @@ struct ipmi_request {
 #define	SMIC_FLAGS			2
 
 struct ipmi_softc;
+#define	IPMI_BUSY	0x1
+#define	IPMI_CLOSING	0x2
 
 /* Per file descriptor data. */
 typedef struct ipmi_device {
@@ -78,6 +91,8 @@ typedef struct ipmi_device {
 	uchar_t			ipmi_lun;
 	dev_t			ipmi_dev;
 	list_node_t		ipmi_node;	/* list link for open devs */
+	int			ipmi_status;
+	kcondvar_t		ipmi_cv;
 } ipmi_device_t;
 
 struct ipmi_softc {

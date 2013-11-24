@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright 2013, Joyent, Inc. All rights reserved.
  */
 
 #ifndef _SYS_ZONE_H
@@ -451,6 +451,10 @@ typedef struct {
 	kstat_named_t	zm_fss_shr_pct;
 	kstat_named_t	zm_fss_pri_hi;
 	kstat_named_t	zm_fss_pri_avg;
+	kstat_named_t	zm_ffcap;
+	kstat_named_t	zm_ffnoproc;
+	kstat_named_t	zm_ffnomem;
+	kstat_named_t	zm_ffmisc;
 } zone_misc_kstat_t;
 
 typedef struct zone {
@@ -602,15 +606,15 @@ typedef struct zone {
 	 * Data and counters used for ZFS fair-share disk IO.
 	 */
 	rctl_qty_t	zone_zfs_io_pri;	/* ZFS IO priority */
-	uint_t		zone_zfs_queued;	/* enqueued count */
+	uint_t		zone_zfs_queued[2];	/* sync I/O enqueued count */
 	uint64_t	zone_zfs_weight;	/* used to prevent starvation */
 	uint64_t	zone_io_util;		/* IO utilization metric */
 	boolean_t	zone_io_util_above_avg;	/* IO util percent > avg. */
 	uint16_t	zone_io_delay;		/* IO delay on logical r/w */
 	kmutex_t	zone_stg_io_lock;	/* protects IO window data */
 	sys_zio_cntr_t	zone_rd_ops;		/* Counters for ZFS reads, */
-	sys_zio_cntr_t	zone_wr_ops;		/* writes and logical writes. */
-	sys_zio_cntr_t	zone_lwr_ops;
+	sys_zio_cntr_t	zone_wr_ops;		/* writes and */
+	sys_zio_cntr_t	zone_lwr_ops;		/* logical writes. */
 
 	/*
 	 * kstats and counters for VFS ops and bytes.
@@ -685,6 +689,11 @@ typedef struct zone {
 	uint64_t	zone_stime;		/* total system time */
 	uint64_t	zone_utime;		/* total user time */
 	uint64_t	zone_wtime;		/* total time waiting in runq */
+	/* fork-fail kstat tracking */
+	uint32_t	zone_ffcap;		/* hit an rctl cap */
+	uint32_t	zone_ffnoproc;		/* get proc/lwp error */
+	uint32_t	zone_ffnomem;		/* as_dup/memory error */
+	uint32_t	zone_ffmisc;		/* misc. other error */
 
 	struct loadavg_s zone_loadavg;		/* loadavg for this zone */
 	uint64_t	zone_hp_avenrun[3];	/* high-precision avenrun */

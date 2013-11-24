@@ -21,9 +21,10 @@
 
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
+ * Copyright 2013 DEY Storage Systems, Inc.
  */
 
 /* Portions Copyright 2010 Robert Milkowski */
@@ -220,6 +221,7 @@ typedef enum dmu_object_type {
 typedef enum txg_how {
 	TXG_WAIT = 1,
 	TXG_NOWAIT,
+	TXG_WAITED,
 } txg_how_t;
 
 void byteswap_uint64_array(void *buf, size_t size);
@@ -581,7 +583,7 @@ int dmu_free_range(objset_t *os, uint64_t object, uint64_t offset,
 	uint64_t size, dmu_tx_t *tx);
 int dmu_free_long_range(objset_t *os, uint64_t object, uint64_t offset,
 	uint64_t size);
-int dmu_free_object(objset_t *os, uint64_t object);
+int dmu_free_long_object(objset_t *os, uint64_t object);
 
 /*
  * Convenience functions.
@@ -804,6 +806,8 @@ int dmu_diff(const char *tosnap_name, const char *fromsnap_name,
 /* CRC64 table */
 #define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */
 extern uint64_t zfs_crc64_table[256];
+
+extern int zfs_mdcomp_disable;
 
 #ifdef	__cplusplus
 }

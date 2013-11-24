@@ -25,6 +25,7 @@
  *
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
+ * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  */
 
 /*
@@ -54,6 +55,7 @@
 #include <sys/stat.h>
 #include <sys/zap.h>
 #include <sys/spa.h>
+#include <sys/spa_impl.h>
 #include <sys/zio.h>
 #include <sys/dmu_traverse.h>
 #include <sys/dnode.h>
@@ -83,6 +85,9 @@
 #include <sys/zil_impl.h>
 #include <sys/sdt.h>
 #include <sys/dbuf.h>
+#include <sys/dmu_tx.h>
+#include <sys/zfeature.h>
+#include <sys/zio_checksum.h>
 
 #include "zfs_namecheck.h"
 
@@ -1125,7 +1130,7 @@ zvol_dumpio_vdev(vdev_t *vd, void *addr, uint64_t offset, uint64_t origoffset,
 	}
 
 	if (!vd->vdev_ops->vdev_op_leaf && vd->vdev_ops != &vdev_raidz_ops)
-		return (numerrors < vd->vdev_children ? 0 : SET_ERROR(EIO));
+		return (numerrors < vd->vdev_children ? 0 : EIO);
 
 	if (doread && !vdev_readable(vd))
 		return (SET_ERROR(EIO));
@@ -1134,7 +1139,7 @@ zvol_dumpio_vdev(vdev_t *vd, void *addr, uint64_t offset, uint64_t origoffset,
 
 	if (vd->vdev_ops == &vdev_raidz_ops) {
 		return (vdev_raidz_physio(vd,
-		    addr, size, offset, origoffset, doread));
+		    addr, size, offset, origoffset, doread, isdump));
 	}
 
 	offset += VDEV_LABEL_START_SIZE;
@@ -1150,7 +1155,6 @@ zvol_dumpio_vdev(vdev_t *vd, void *addr, uint64_t offset, uint64_t origoffset,
 	} else {
 		dvd = vd->vdev_tsd;
 		ASSERT3P(dvd, !=, NULL);
-
 		return (vdev_disk_ldi_physio(dvd->vd_lh, addr, size,
 		    offset, doread ? B_READ : B_WRITE));
 	}
@@ -1208,7 +1212,7 @@ zvol_strategy(buf_t *bp)
 	rl_t *rl;
 	int error = 0;
 	boolean_t doread = bp->b_flags & B_READ;
-	boolean_t is_dump;
+	boolean_t is_dumpified;
 	boolean_t sync;
 
 	if (getminor(bp->b_edev) == 0) {
@@ -1251,11 +1255,11 @@ zvol_strategy(buf_t *bp)
 		return (0);
 	}
 
-	is_dump = zv->zv_flags & ZVOL_DUMPIFIED;
+	is_dumpified = zv->zv_flags & ZVOL_DUMPIFIED;
 	sync = ((!(bp->b_flags & B_ASYNC) &&
 	    !(zv->zv_flags & ZVOL_WCE)) ||
 	    (zv->zv_objset->os_sync == ZFS_SYNC_ALWAYS)) &&
-	    !doread && !is_dump;
+	    !doread && !is_dumpified;
 
 	/*
 	 * There must be no buffer changes when doing a dmu_sync() because
@@ -1266,7 +1270,7 @@ zvol_strategy(buf_t *bp)
 
 	while (resid != 0 && off < volsize) {
 		size_t size = MIN(resid, zvol_maxphys);
-		if (is_dump) {
+		if (is_dumpified) {
 			size = MIN(size, P2END(off, zv->zv_volblocksize) - off);
 			error = zvol_dumpio(zv, addr, off, size,
 			    doread, B_FALSE);
@@ -1837,20 +1841,64 @@ zvol_fini(void)
 	ddi_soft_state_fini(&zfsdev_state);
 }
 
+/*ARGSUSED*/
+static int
+zfs_mvdev_dump_feature_check(void *arg, dmu_tx_t *tx)
+{
+	spa_t *spa = dmu_tx_pool(tx)->dp_spa;
+
+	if (spa_feature_is_active(spa, SPA_FEATURE_MULTI_VDEV_CRASH_DUMP))
+		return (1);
+	return (0);
+}
+
+/*ARGSUSED*/
+static void
+zfs_mvdev_dump_activate_feature_sync(void *arg, dmu_tx_t *tx)
+{
+	spa_t *spa = dmu_tx_pool(tx)->dp_spa;
+
+	spa_feature_incr(spa, SPA_FEATURE_MULTI_VDEV_CRASH_DUMP, tx);
+}
+
 static int
 zvol_dump_init(zvol_state_t *zv, boolean_t resize)
 {
 	dmu_tx_t *tx;
-	int error = 0;
+	int error;
 	objset_t *os = zv->zv_objset;
+	spa_t *spa = dmu_objset_spa(os);
+	vdev_t *vd = spa->spa_root_vdev;
 	nvlist_t *nv = NULL;
-	uint64_t version = spa_version(dmu_objset_spa(zv->zv_objset));
+	uint64_t version = spa_version(spa);
+	enum zio_checksum checksum;
 
 	ASSERT(MUTEX_HELD(&zfsdev_state_lock));
+	ASSERT(vd->vdev_ops == &vdev_root_ops);
+
 	error = dmu_free_long_range(zv->zv_objset, ZVOL_OBJ, 0,
 	    DMU_OBJECT_END);
 	/* wait for dmu_free_long_range to actually free the blocks */
 	txg_wait_synced(dmu_objset_pool(zv->zv_objset), 0);
+
+	/*
+	 * If the pool on which the dump device is being initialized has more
+	 * than one child vdev, check that the MULTI_VDEV_CRASH_DUMP feature is
+	 * enabled.  If so, bump that feature's counter to indicate that the
+	 * feature is active. We also check the vdev type to handle the
+	 * following case:
+	 *   # zpool create test raidz disk1 disk2 disk3
+	 *   Now have spa_root_vdev->vdev_children == 1 (the raidz vdev),
+	 *   the raidz vdev itself has 3 children.
+	 */
+	if (vd->vdev_children > 1 || vd->vdev_ops == &vdev_raidz_ops) {
+		if (!spa_feature_is_enabled(spa,
+		    SPA_FEATURE_MULTI_VDEV_CRASH_DUMP))
+			return (SET_ERROR(ENOTSUP));
+		(void) dsl_sync_task(spa_name(spa),
+		    zfs_mvdev_dump_feature_check,
+		    zfs_mvdev_dump_activate_feature_sync, NULL, 2);
+	}
 
 	tx = dmu_tx_create(os);
 	dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);
@@ -1860,6 +1908,14 @@ zvol_dump_init(zvol_state_t *zv, boolean_t resize)
 		dmu_tx_abort(tx);
 		return (error);
 	}
+
+	/*
+	 * If MULTI_VDEV_CRASH_DUMP is active, use the NOPARITY checksum
+	 * function.  Otherwise, use the old default -- OFF.
+	 */
+	checksum = spa_feature_is_active(spa,
+	    SPA_FEATURE_MULTI_VDEV_CRASH_DUMP) ? ZIO_CHECKSUM_NOPARITY :
+	    ZIO_CHECKSUM_OFF;
 
 	/*
 	 * If we are resizing the dump device then we only need to
@@ -1924,7 +1980,7 @@ zvol_dump_init(zvol_state_t *zv, boolean_t resize)
 		    ZIO_COMPRESS_OFF) == 0);
 		VERIFY(nvlist_add_uint64(nv,
 		    zfs_prop_to_name(ZFS_PROP_CHECKSUM),
-		    ZIO_CHECKSUM_NOPARITY) == 0);
+		    checksum) == 0);
 		if (version >= SPA_VERSION_DEDUP) {
 			VERIFY(nvlist_add_uint64(nv,
 			    zfs_prop_to_name(ZFS_PROP_DEDUP),

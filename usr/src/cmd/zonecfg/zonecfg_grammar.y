@@ -22,7 +22,7 @@
 
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2011, Joyent Inc. All rights reserved.
+ * Copyright 2013, Joyent Inc. All rights reserved.
  */
 
 /*
@@ -754,6 +754,19 @@ remove_command: REMOVE
 		$$->cmd_prop_name[0] = $2;
 		$$->cmd_property_ptr[0] = &property[0];
 	}
+	| REMOVE TOKEN property_name property_value
+	{
+		if (($$ = alloc_cmd()) == NULL)
+			YYERROR;
+		cmd = $$;
+		$$->cmd_handler = &remove_func;
+		$$->cmd_argc = 1;
+		$$->cmd_argv[0] = claim_token($2);
+		$$->cmd_argv[1] = NULL;
+		$$->cmd_prop_nv_pairs = 1;
+		$$->cmd_prop_name[0] = $3;
+		$$->cmd_property_ptr[0] = &property[0];
+	}
 	| REMOVE resource_type property_name EQUAL property_value
 	{
 		if (($$ = alloc_cmd()) == NULL)
@@ -763,6 +776,20 @@ remove_command: REMOVE
 		$$->cmd_res_type = $2;
 		$$->cmd_prop_nv_pairs = 1;
 		$$->cmd_prop_name[0] = $3;
+		$$->cmd_property_ptr[0] = &property[0];
+	}
+	| REMOVE TOKEN resource_type property_name EQUAL property_value
+	{
+		if (($$ = alloc_cmd()) == NULL)
+			YYERROR;
+		cmd = $$;
+		$$->cmd_handler = &remove_func;
+		$$->cmd_res_type = $3;
+		$$->cmd_argc = 1;
+		$$->cmd_argv[0] = claim_token($2);
+		$$->cmd_argv[1] = NULL;
+		$$->cmd_prop_nv_pairs = 1;
+		$$->cmd_prop_name[0] = $4;
 		$$->cmd_property_ptr[0] = &property[0];
 	}
 	| REMOVE resource_type property_name EQUAL property_value property_name EQUAL property_value
@@ -778,6 +805,22 @@ remove_command: REMOVE
 		$$->cmd_prop_name[1] = $6;
 		$$->cmd_property_ptr[1] = &property[1];
 	}
+	| REMOVE TOKEN resource_type property_name EQUAL property_value property_name EQUAL property_value
+	{
+		if (($$ = alloc_cmd()) == NULL)
+			YYERROR;
+		cmd = $$;
+		$$->cmd_handler = &remove_func;
+		$$->cmd_res_type = $3;
+		$$->cmd_argc = 1;
+		$$->cmd_argv[0] = claim_token($2);
+		$$->cmd_argv[1] = NULL;
+		$$->cmd_prop_nv_pairs = 2;
+		$$->cmd_prop_name[0] = $4;
+		$$->cmd_property_ptr[0] = &property[0];
+		$$->cmd_prop_name[1] = $7;
+		$$->cmd_property_ptr[1] = &property[1];
+	}
 	| REMOVE resource_type property_name EQUAL property_value property_name EQUAL property_value property_name EQUAL property_value
 	{
 		if (($$ = alloc_cmd()) == NULL)
@@ -791,6 +834,24 @@ remove_command: REMOVE
 		$$->cmd_prop_name[1] = $6;
 		$$->cmd_property_ptr[1] = &property[1];
 		$$->cmd_prop_name[2] = $9;
+		$$->cmd_property_ptr[2] = &property[2];
+	}
+	| REMOVE TOKEN resource_type property_name EQUAL property_value property_name EQUAL property_value property_name EQUAL property_value
+	{
+		if (($$ = alloc_cmd()) == NULL)
+			YYERROR;
+		cmd = $$;
+		$$->cmd_handler = &remove_func;
+		$$->cmd_res_type = $3;
+		$$->cmd_argc = 1;
+		$$->cmd_argv[0] = claim_token($2);
+		$$->cmd_argv[1] = NULL;
+		$$->cmd_prop_nv_pairs = 3;
+		$$->cmd_prop_name[0] = $4;
+		$$->cmd_property_ptr[0] = &property[0];
+		$$->cmd_prop_name[1] = $7;
+		$$->cmd_property_ptr[1] = &property[1];
+		$$->cmd_prop_name[2] = $10;
 		$$->cmd_property_ptr[2] = &property[2];
 	}
 

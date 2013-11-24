@@ -118,7 +118,7 @@
 #include <sys/smbios.h>
 #include <sys/debug_info.h>
 #include <sys/bootinfo.h>
-#include <sys/ddi_timer.h>
+#include <sys/ddi_periodic.h>
 #include <sys/systeminfo.h>
 #include <sys/multiboot.h>
 
@@ -2245,14 +2245,13 @@ startup_end(void)
 	    "softlevel1", NULL, NULL); /* XXX to be moved later */
 
 	/*
-	 * Register these software interrupts for ddi timer.
+	 * Register software interrupt handlers for ddi_periodic_add(9F).
 	 * Software interrupts up to the level 10 are supported.
 	 */
 	for (i = DDI_IPL_1; i <= DDI_IPL_10; i++) {
-		char name[sizeof ("timer_softintr") + 2];
-		(void) sprintf(name, "timer_softintr%02d", i);
 		(void) add_avsoftintr((void *)&softlevel_hdl[i-1], i,
-		    (avfunc)timer_softintr, name, (caddr_t)(uintptr_t)i, NULL);
+		    (avfunc)ddi_periodic_softintr, "ddi_periodic",
+		    (caddr_t)(uintptr_t)i, NULL);
 	}
 
 #if !defined(__xpv)
@@ -2780,9 +2779,9 @@ uuid_to_hostid(const uint8_t *uuid)
 	 * in loadable modules and not available this early in boot.  As we
 	 * don't need the values to be cryptographically strong, we just
 	 * generate 32-bit vaue by xor'ing the various sequences together,
-	 * which ensures that the enire UUID contributes to the hostid.
+	 * which ensures that the entire UUID contributes to the hostid.
 	 */
-	int32_t	id = 0;
+	uint32_t	id = 0;
 
 	/* first check against the blacklist */
 	for (int i = 0; i < (sizeof (smbios_uuid_blacklist) / 16); i++) {
@@ -2796,7 +2795,8 @@ uuid_to_hostid(const uint8_t *uuid)
 	for (int i = 0; i < 16; i++)
 		id ^= ((uuid[i]) << (8 * (i % sizeof (id))));
 
-	return (id);
+	/* Make sure return value is positive */
+	return (id & 0x7fffffff);
 }
 
 static int32_t

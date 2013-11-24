@@ -579,7 +579,6 @@ port_fop_femuninstall(vnode_t *vp)
 		 */
 		(void) fem_uninstall(vp, (fem_t *)pvp->pvp_femp, vp);
 		pvp->pvp_femp = NULL;
-		mutex_exit(&pvp->pvp_mutex);
 
 
 		/*
@@ -602,9 +601,8 @@ port_fop_femuninstall(vnode_t *vp)
 		} else {
 			mutex_exit(mtx);
 		}
-	} else {
-		mutex_exit(&pvp->pvp_mutex);
 	}
+	mutex_exit(&pvp->pvp_mutex);
 	return (ret);
 }
 
@@ -1828,12 +1826,19 @@ port_fop_sendevent(vnode_t *vp, int events, vnode_t *dvp, char *cname)
 	if (!removeall) {
 		/*
 		 * All the active ones are in the beginning of the list.
+		 * Note that we process this list in reverse order to assure
+		 * that events are delivered in the order that they were
+		 * associated.
 		 */
-		for (pfp = (portfop_t *)list_head(&pvp->pvp_pfoplist);
-		    pfp && pfp->pfop_flags & PORT_FOP_ACTIVE; pfp = npfp) {
+		for (pfp = (portfop_t *)list_tail(&pvp->pvp_pfoplist);
+		    pfp && !(pfp->pfop_flags & PORT_FOP_ACTIVE); pfp = npfp) {
+			npfp = list_prev(&pvp->pvp_pfoplist, pfp);
+		}
+
+		for (; pfp != NULL; pfp = npfp) {
 			int levents = events;
 
-			npfp = list_next(&pvp->pvp_pfoplist, pfp);
+			npfp = list_prev(&pvp->pvp_pfoplist, pfp);
 			/*
 			 * Hard links case - If the file is being
 			 * removed/renamed, and the name matches
@@ -2347,6 +2352,9 @@ port_fop_vnevent(femarg_t *vf, vnevent_t vnevent, vnode_t *dvp, char *name,
 
 	case	VE_MOUNTEDOVER:
 			port_fop_sendevent(vp, MOUNTEDOVER, NULL, NULL);
+		break;
+	case	VE_TRUNCATE:
+			port_fop_sendevent(vp, FILE_TRUNC, NULL, NULL);
 		break;
 	default:
 		break;

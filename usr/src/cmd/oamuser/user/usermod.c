@@ -19,6 +19,8 @@
  * CDDL HEADER END
  */
 /*
+ * Copyright (c) 2013 Gary Mills
+ *
  * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
@@ -26,7 +28,9 @@
 /*	Copyright (c) 1984, 1986, 1987, 1988, 1989 AT&T	*/
 /*	  All Rights Reserved  	*/
 
-
+/*
+ * Copyright (c) 2013 RackTop Systems.
+ */
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -368,6 +372,12 @@ char **argv;
 			errmsg(M_USED, new_logname);
 			exit(EX_NAME_EXISTS);
 			/*NOTREACHED*/
+
+		case LONGNAME:
+			errmsg(M_TOO_LONG, new_logname);
+			exit(EX_BADARG);
+			/*NOTREACHED*/
+
 		default:
 			call_pass = 1;
 			break;
@@ -510,12 +520,13 @@ char **argv;
 		}
 	}
 
-	if (comment)
+	if (comment) {
 		/* ignore comment if comment is not changed */
 		if (strcmp(pstruct->pw_comment, comment))
 			call_pass = 1;
 		else
 			comment = NULL;
+	}
 
 	/* inactive string is a positive integer */
 	if (inactstr) {

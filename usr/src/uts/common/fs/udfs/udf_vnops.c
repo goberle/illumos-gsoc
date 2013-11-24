@@ -23,6 +23,10 @@
  * Copyright (c) 1998, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
+/*
+ * Copyright (c) 2013, Joyent, Inc. All rights reserved.
+ */
+
 #include <sys/types.h>
 #include <sys/t_lock.h>
 #include <sys/param.h>
@@ -564,6 +568,9 @@ udf_setattr(
 		if (error = ud_itrunc(ip, vap->va_size, 0, cr)) {
 			goto update_inode;
 		}
+
+		if (vap->va_size == 0)
+			vnevent_truncate(vp, ct);
 	}
 	/*
 	 * Change file access or modified times.
@@ -904,7 +911,7 @@ udf_rename(
 	caller_context_t *ct,
 	int flags)
 {
-	int32_t error = 0;
+	int32_t error = 0, err;
 	struct udf_vfs *udf_vfsp;
 	struct ud_inode *sip;		/* source inode */
 	struct ud_inode *sdp, *tdp;	/* source and target parent inode */
@@ -988,7 +995,6 @@ udf_rename(
 		rw_exit(&tdp->i_rwlock);
 		goto errout;
 	}
-	vnevent_rename_src(ITOV(sip), sdvp, snm, ct);
 	rw_exit(&tdp->i_rwlock);
 
 	rw_enter(&sdp->i_rwlock, RW_WRITER);
@@ -999,11 +1005,15 @@ udf_rename(
 	 * If the entry has changed just forget about it.  Release
 	 * the source inode.
 	 */
-	if ((error = ud_dirremove(sdp, snm, sip, (struct vnode *)0,
+	if ((error = err = ud_dirremove(sdp, snm, sip, (struct vnode *)0,
 	    DR_RENAME, cr, ct)) == ENOENT) {
 		error = 0;
 	}
 	rw_exit(&sdp->i_rwlock);
+
+	if (err == 0)
+		vnevent_rename_src(ITOV(sip), sdvp, snm, ct);
+
 errout:
 	ITIMES(sdp);
 	ITIMES(tdp);
@@ -1621,6 +1631,9 @@ udf_space(
 		error =  EINVAL;
 	} else if ((error = convoff(vp, bfp, 0, offset)) == 0) {
 		error = ud_freesp(vp, bfp, flag, cr);
+
+		if (error == 0 && bfp->l_start == 0)
+			vnevent_truncate(vp, ct);
 	}
 
 	return (error);

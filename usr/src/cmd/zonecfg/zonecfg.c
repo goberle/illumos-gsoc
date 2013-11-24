@@ -21,7 +21,7 @@
 
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, Joyent Inc. All rights reserved.
+ * Copyright 2013, Joyent Inc. All rights reserved.
  */
 
 /*
@@ -126,7 +126,7 @@ extern int lex_lineno;
 #define	SHELP_REMOVE	"remove [-F] <resource-type> " \
 	"[ <property-name>=<property-value> ]*\n" \
 	"\t(global scope)\n" \
-	"remove <property-name> <property-value>\n" \
+	"remove [-F] <property-name> <property-value>\n" \
 	"\t(resource scope)"
 #define	SHELP_REVERT	"revert [-F]"
 #define	SHELP_SELECT	"select <resource-type> { <property-name>=" \
@@ -3117,6 +3117,8 @@ prompt_remove_resource(cmd_t *cmd, char *rsrc)
 	num = zonecfg_num_resources(handle, rsrc);
 
 	if (num == 0) {
+		if (force)
+			return (B_TRUE);
 		z_cmd_rt_perror(CMD_REMOVE, cmd->cmd_res_type, Z_NO_ENTRY,
 		    B_TRUE);
 		return (B_FALSE);
@@ -3145,7 +3147,7 @@ prompt_remove_resource(cmd_t *cmd, char *rsrc)
 }
 
 static void
-remove_fs(cmd_t *cmd)
+remove_fs(cmd_t *cmd, boolean_t force)
 {
 	int err;
 
@@ -3154,13 +3156,16 @@ remove_fs(cmd_t *cmd)
 		struct zone_fstab fstab;
 
 		if ((err = fill_in_fstab(cmd, &fstab, B_FALSE)) != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_FS, err, B_TRUE);
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_FS, err, B_TRUE);
 			return;
 		}
-		if ((err = zonecfg_delete_filesystem(handle, &fstab)) != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_FS, err, B_TRUE);
-		else
+		if ((err = zonecfg_delete_filesystem(handle, &fstab)) != Z_OK) {
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_FS, err, B_TRUE);
+		} else {
 			need_to_commit = B_TRUE;
+		}
 		zonecfg_free_fs_option_list(fstab.zone_fs_options);
 		return;
 	}
@@ -3179,7 +3184,7 @@ remove_fs(cmd_t *cmd)
 }
 
 static void
-remove_net(cmd_t *cmd)
+remove_net(cmd_t *cmd, boolean_t force)
 {
 	int err;
 
@@ -3188,13 +3193,18 @@ remove_net(cmd_t *cmd)
 		struct zone_nwiftab nwiftab;
 
 		if ((err = fill_in_nwiftab(cmd, &nwiftab, B_FALSE)) != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_NET, err, B_TRUE);
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_NET, err,
+				    B_TRUE);
 			return;
 		}
-		if ((err = zonecfg_delete_nwif(handle, &nwiftab)) != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_NET, err, B_TRUE);
-		else
+		if ((err = zonecfg_delete_nwif(handle, &nwiftab)) != Z_OK) {
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_NET, err,
+				    B_TRUE);
+		} else {
 			need_to_commit = B_TRUE;
+		}
 		return;
 	}
 
@@ -3212,7 +3222,7 @@ remove_net(cmd_t *cmd)
 }
 
 static void
-remove_device(cmd_t *cmd)
+remove_device(cmd_t *cmd, boolean_t force)
 {
 	int err;
 
@@ -3221,13 +3231,18 @@ remove_device(cmd_t *cmd)
 		struct zone_devtab devtab;
 
 		if ((err = fill_in_devtab(cmd, &devtab, B_FALSE)) != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_DEVICE, err, B_TRUE);
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_DEVICE, err,
+				    B_TRUE);
 			return;
 		}
-		if ((err = zonecfg_delete_dev(handle, &devtab)) != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_DEVICE, err, B_TRUE);
-		else
+		if ((err = zonecfg_delete_dev(handle, &devtab)) != Z_OK) {
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_DEVICE, err,
+				    B_TRUE);
+		} else {
 			need_to_commit = B_TRUE;
+		}
 		return;
 	}
 
@@ -3245,7 +3260,7 @@ remove_device(cmd_t *cmd)
 }
 
 static void
-remove_attr(cmd_t *cmd)
+remove_attr(cmd_t *cmd, boolean_t force)
 {
 	int err;
 
@@ -3254,13 +3269,18 @@ remove_attr(cmd_t *cmd)
 		struct zone_attrtab attrtab;
 
 		if ((err = fill_in_attrtab(cmd, &attrtab, B_FALSE)) != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_ATTR, err, B_TRUE);
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_ATTR, err,
+				    B_TRUE);
 			return;
 		}
-		if ((err = zonecfg_delete_attr(handle, &attrtab)) != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_ATTR, err, B_TRUE);
-		else
+		if ((err = zonecfg_delete_attr(handle, &attrtab)) != Z_OK) {
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_ATTR, err,
+				    B_TRUE);
+		} else {
 			need_to_commit = B_TRUE;
+		}
 		return;
 	}
 
@@ -3278,7 +3298,7 @@ remove_attr(cmd_t *cmd)
 }
 
 static void
-remove_dataset(cmd_t *cmd)
+remove_dataset(cmd_t *cmd, boolean_t force)
 {
 	int err;
 
@@ -3287,13 +3307,18 @@ remove_dataset(cmd_t *cmd)
 		struct zone_dstab dstab;
 
 		if ((err = fill_in_dstab(cmd, &dstab, B_FALSE)) != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_DATASET, err, B_TRUE);
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_DATASET, err,
+				    B_TRUE);
 			return;
 		}
-		if ((err = zonecfg_delete_ds(handle, &dstab)) != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_DATASET, err, B_TRUE);
-		else
+		if ((err = zonecfg_delete_ds(handle, &dstab)) != Z_OK) {
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_DATASET, err,
+				    B_TRUE);
+		} else {
 			need_to_commit = B_TRUE;
+		}
 		return;
 	}
 
@@ -3311,7 +3336,7 @@ remove_dataset(cmd_t *cmd)
 }
 
 static void
-remove_rctl(cmd_t *cmd)
+remove_rctl(cmd_t *cmd, boolean_t force)
 {
 	int err;
 
@@ -3320,13 +3345,18 @@ remove_rctl(cmd_t *cmd)
 		struct zone_rctltab rctltab;
 
 		if ((err = fill_in_rctltab(cmd, &rctltab, B_FALSE)) != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_RCTL, err, B_TRUE);
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_RCTL, err,
+				    B_TRUE);
 			return;
 		}
-		if ((err = zonecfg_delete_rctl(handle, &rctltab)) != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_RCTL, err, B_TRUE);
-		else
+		if ((err = zonecfg_delete_rctl(handle, &rctltab)) != Z_OK) {
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_RCTL, err,
+				    B_TRUE);
+		} else {
 			need_to_commit = B_TRUE;
+		}
 		zonecfg_free_rctl_value_list(rctltab.zone_rctl_valptr);
 		return;
 	}
@@ -3345,42 +3375,50 @@ remove_rctl(cmd_t *cmd)
 }
 
 static void
-remove_pset()
+remove_pset(boolean_t force)
 {
 	int err;
 	struct zone_psettab psettab;
 
 	if ((err = zonecfg_lookup_pset(handle, &psettab)) != Z_OK) {
-		z_cmd_rt_perror(CMD_REMOVE, RT_DCPU, err, B_TRUE);
+		if (!force)
+			z_cmd_rt_perror(CMD_REMOVE, RT_DCPU, err, B_TRUE);
 		return;
 	}
-	if ((err = zonecfg_delete_pset(handle)) != Z_OK)
-		z_cmd_rt_perror(CMD_REMOVE, RT_DCPU, err, B_TRUE);
-	else
+	if ((err = zonecfg_delete_pset(handle)) != Z_OK) {
+		if (!force)
+			z_cmd_rt_perror(CMD_REMOVE, RT_DCPU, err, B_TRUE);
+	} else {
 		need_to_commit = B_TRUE;
+	}
 }
 
 static void
-remove_pcap()
+remove_pcap(boolean_t force)
 {
 	int err;
 	uint64_t tmp;
 
 	if (zonecfg_get_aliased_rctl(handle, ALIAS_CPUCAP, &tmp) != Z_OK) {
-		zerr("%s %s: %s", cmd_to_str(CMD_REMOVE), rt_to_str(RT_PCAP),
-		    zonecfg_strerror(Z_NO_RESOURCE_TYPE));
-		saw_error = B_TRUE;
+		if (!force) {
+			zerr("%s %s: %s", cmd_to_str(CMD_REMOVE),
+			    rt_to_str(RT_PCAP),
+			    zonecfg_strerror(Z_NO_RESOURCE_TYPE));
+			saw_error = B_TRUE;
+		}
 		return;
 	}
 
-	if ((err = zonecfg_rm_aliased_rctl(handle, ALIAS_CPUCAP)) != Z_OK)
-		z_cmd_rt_perror(CMD_REMOVE, RT_PCAP, err, B_TRUE);
-	else
+	if ((err = zonecfg_rm_aliased_rctl(handle, ALIAS_CPUCAP)) != Z_OK) {
+		if (!force)
+			z_cmd_rt_perror(CMD_REMOVE, RT_PCAP, err, B_TRUE);
+	} else {
 		need_to_commit = B_TRUE;
+	}
 }
 
 static void
-remove_mcap()
+remove_mcap(boolean_t force)
 {
 	int err, res1, res2, res3;
 	uint64_t tmp;
@@ -3392,16 +3430,22 @@ remove_mcap()
 
 	/* if none of these exist, there is no resource to remove */
 	if (res1 != Z_OK && res2 != Z_OK && res3 != Z_OK) {
-		zerr("%s %s: %s", cmd_to_str(CMD_REMOVE), rt_to_str(RT_MCAP),
-		    zonecfg_strerror(Z_NO_RESOURCE_TYPE));
-		saw_error = B_TRUE;
+		if (!force) {
+			zerr("%s %s: %s", cmd_to_str(CMD_REMOVE),
+			    rt_to_str(RT_MCAP),
+			    zonecfg_strerror(Z_NO_RESOURCE_TYPE));
+			saw_error = B_TRUE;
+		}
 		return;
 	}
 	if (res1 == Z_OK) {
 		if ((err = zonecfg_rm_aliased_rctl(handle, ALIAS_MAXPHYSMEM))
 		    != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_MCAP, err, B_TRUE);
-			revert = B_TRUE;
+			if (!force) {
+				z_cmd_rt_perror(CMD_REMOVE, RT_MCAP, err,
+				    B_TRUE);
+				revert = B_TRUE;
+			}
 		} else {
 			need_to_commit = B_TRUE;
 		}
@@ -3410,8 +3454,11 @@ remove_mcap()
 	if (res2 == Z_OK) {
 		if ((err = zonecfg_rm_aliased_rctl(handle, ALIAS_MAXSWAP))
 		    != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_MCAP, err, B_TRUE);
-			revert = B_TRUE;
+			if (!force) {
+				z_cmd_rt_perror(CMD_REMOVE, RT_MCAP, err,
+				    B_TRUE);
+				revert = B_TRUE;
+			}
 		} else {
 			need_to_commit = B_TRUE;
 		}
@@ -3419,8 +3466,11 @@ remove_mcap()
 	if (res3 == Z_OK) {
 		if ((err = zonecfg_rm_aliased_rctl(handle, ALIAS_MAXLOCKEDMEM))
 		    != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_MCAP, err, B_TRUE);
-			revert = B_TRUE;
+			if (!force) {
+				z_cmd_rt_perror(CMD_REMOVE, RT_MCAP, err,
+				    B_TRUE);
+				revert = B_TRUE;
+			}
 		} else {
 			need_to_commit = B_TRUE;
 		}
@@ -3431,7 +3481,7 @@ remove_mcap()
 }
 
 static void
-remove_admin(cmd_t *cmd)
+remove_admin(cmd_t *cmd, boolean_t force)
 {
 	int err;
 
@@ -3440,34 +3490,33 @@ remove_admin(cmd_t *cmd)
 		struct zone_admintab admintab;
 
 		if ((err = fill_in_admintab(cmd, &admintab, B_FALSE)) != Z_OK) {
-			z_cmd_rt_perror(CMD_REMOVE, RT_ADMIN,
-			    err, B_TRUE);
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_ADMIN, err,
+				    B_TRUE);
 			return;
 		}
 		if ((err = zonecfg_delete_admin(handle, &admintab,
-		    zone))
-		    != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_ADMIN,
-			    err, B_TRUE);
-		else
+		    zone)) != Z_OK) {
+			if (!force)
+				z_cmd_rt_perror(CMD_REMOVE, RT_ADMIN, err,
+				    B_TRUE);
+		} else {
 			need_to_commit = B_TRUE;
+		}
 		return;
-	} else {
-		/*
-		 * unqualified admin removal.
-		 * remove all admins but prompt if more
-		 * than one.
-		 */
-		if (!prompt_remove_resource(cmd, "admin"))
-			return;
-
-		if ((err = zonecfg_delete_admins(handle, zone))
-		    != Z_OK)
-			z_cmd_rt_perror(CMD_REMOVE, RT_ADMIN,
-			    err, B_TRUE);
-		else
-			need_to_commit = B_TRUE;
 	}
+
+	/*
+	 * unqualified admin removal.
+	 * remove all admins but prompt if more than one.
+	 */
+	if (!prompt_remove_resource(cmd, "admin"))
+		return;
+
+	if ((err = zonecfg_delete_admins(handle, zone)) != Z_OK)
+		z_cmd_rt_perror(CMD_REMOVE, RT_ADMIN, err, B_TRUE);
+	else
+		need_to_commit = B_TRUE;
 }
 
 static void
@@ -3476,6 +3525,7 @@ remove_resource(cmd_t *cmd)
 	int type;
 	int arg;
 	boolean_t arg_err = B_FALSE;
+	boolean_t force = B_FALSE;
 
 	if ((type = cmd->cmd_res_type) == RT_UNKNOWN) {
 		long_usage(CMD_REMOVE, B_TRUE);
@@ -3490,6 +3540,7 @@ remove_resource(cmd_t *cmd)
 			arg_err = B_TRUE;
 			break;
 		case 'F':
+			force = B_TRUE;
 			break;
 		default:
 			short_usage(CMD_REMOVE);
@@ -3505,34 +3556,34 @@ remove_resource(cmd_t *cmd)
 
 	switch (type) {
 	case RT_FS:
-		remove_fs(cmd);
+		remove_fs(cmd, force);
 		return;
 	case RT_NET:
-		remove_net(cmd);
+		remove_net(cmd, force);
 		return;
 	case RT_DEVICE:
-		remove_device(cmd);
+		remove_device(cmd, force);
 		return;
 	case RT_RCTL:
-		remove_rctl(cmd);
+		remove_rctl(cmd, force);
 		return;
 	case RT_ATTR:
-		remove_attr(cmd);
+		remove_attr(cmd, force);
 		return;
 	case RT_DATASET:
-		remove_dataset(cmd);
+		remove_dataset(cmd, force);
 		return;
 	case RT_DCPU:
-		remove_pset();
+		remove_pset(force);
 		return;
 	case RT_PCAP:
-		remove_pcap();
+		remove_pcap(force);
 		return;
 	case RT_MCAP:
-		remove_mcap();
+		remove_mcap(force);
 		return;
 	case RT_ADMIN:
-		remove_admin(cmd);
+		remove_admin(cmd, force);
 		return;
 	default:
 		zone_perror(rt_to_str(type), Z_NO_RESOURCE_TYPE, B_TRUE);
@@ -3551,6 +3602,25 @@ remove_property(cmd_t *cmd)
 	struct zone_rctlvaltab *rctlvaltab;
 	struct zone_res_attrtab *np;
 	complex_property_ptr_t cx;
+	int arg;
+	boolean_t force = B_FALSE;
+	boolean_t arg_err = B_FALSE;
+
+	optind = 0;
+	while ((arg = getopt(cmd->cmd_argc, cmd->cmd_argv, "F")) != EOF) {
+		switch (arg) {
+		case 'F':
+			force = B_TRUE;
+			break;
+		default:
+			arg_err = B_TRUE;
+			break;
+		}
+	}
+	if (arg_err) {
+		saw_error = B_TRUE;
+		return;
+	}
 
 	res_type = resource_scope;
 	prop_type = cmd->cmd_prop_name[0];
@@ -3592,7 +3662,7 @@ remove_property(cmd_t *cmd)
 			prop_id = pp->pv_simple;
 			err = zonecfg_remove_fs_option(&in_progress_fstab,
 			    prop_id);
-			if (err != Z_OK)
+			if (err != Z_OK && !force)
 				zone_perror(pt_to_str(prop_type), err, B_TRUE);
 		} else {
 			list_property_ptr_t list;
@@ -3604,7 +3674,7 @@ remove_property(cmd_t *cmd)
 					break;
 				err = zonecfg_remove_fs_option(
 				    &in_progress_fstab, prop_id);
-				if (err != Z_OK)
+				if (err != Z_OK && !force)
 					zone_perror(pt_to_str(prop_type), err,
 					    B_TRUE);
 			}
@@ -3657,7 +3727,7 @@ remove_property(cmd_t *cmd)
 			err = zonecfg_remove_res_attr(
 			    &(in_progress_devtab.zone_dev_attrp), np);
 		}
-		if (err != Z_OK)
+		if (err != Z_OK && !force)
 			zone_perror(pt_to_str(prop_type), err, B_TRUE);
 		return;
 	case RT_RCTL:
@@ -3708,7 +3778,7 @@ remove_property(cmd_t *cmd)
 		rctlvaltab->zone_rctlval_next = NULL;
 		err = zonecfg_remove_rctl_value(&in_progress_rctltab,
 		    rctlvaltab);
-		if (err != Z_OK)
+		if (err != Z_OK && !force)
 			zone_perror(pt_to_str(prop_type), err, B_TRUE);
 		zonecfg_free_rctl_value_list(rctlvaltab);
 		return;

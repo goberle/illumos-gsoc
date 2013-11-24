@@ -19,7 +19,7 @@
  * CDDL HEADER END
  *
  * Copyright (c) 1989, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
+ * Copyright 2013 Nexenta Systems, Inc.  All rights reserved.
  * Copyright 2012 Joyent, Inc. All rights reserved.
  */
 
@@ -32,6 +32,7 @@
  */
 
 #include <stdio.h>
+#include <stdio_ext.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <sys/types.h>
@@ -50,6 +51,7 @@
 #include <sys/systeminfo.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <signal.h>
 #include <locale.h>
 #include <unistd.h>
@@ -365,6 +367,7 @@ main(int argc, char *argv[])
 	long	thr_flags = (THR_NEW_LWP|THR_DAEMON);
 	char defval[4];
 	int defvers, ret, bufsz;
+	struct rlimit rl;
 
 	int	pipe_fd = -1;
 
@@ -397,6 +400,16 @@ main(int argc, char *argv[])
 		    argv[0]);
 		exit(1);
 	}
+
+	if (getrlimit(RLIMIT_NOFILE, &rl) != 0) {
+		syslog(LOG_ERR, "getrlimit failed");
+	} else {
+		rl.rlim_cur = rl.rlim_max;
+		if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
+			syslog(LOG_ERR, "setrlimit failed");
+	}
+
+	(void) enable_extended_FILE_stdio(-1, -1);
 
 	maxthreads = 0;
 
@@ -2028,7 +2041,7 @@ getclientsflavors_new(share_t *sh, SVCXPRT *transp, struct netbuf **nb,
 	char *lasts;
 	char *f;
 	boolean_t access_ok;
-	int count, c, perm;
+	int count, c;
 	boolean_t reject = B_FALSE;
 
 	opts = strdup(sh->sh_opts);
@@ -2038,7 +2051,7 @@ getclientsflavors_new(share_t *sh, SVCXPRT *transp, struct netbuf **nb,
 	}
 
 	p = opts;
-	perm = count = c = 0;
+	count = c = 0;
 	/* default access is rw */
 	access_ok = B_TRUE;
 
